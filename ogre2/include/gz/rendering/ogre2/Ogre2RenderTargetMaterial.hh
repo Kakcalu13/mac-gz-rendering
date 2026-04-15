@@ -30,53 +30,39 @@ namespace ignition
     inline namespace IGNITION_RENDERING_VERSION_NAMESPACE {
     //
     /// \brief Causes all objects in a scene to be rendered with the same
-    /// material when rendered by a given RenderTarget.
-    /// \internal
+    /// material when rendered by a given CompositorWorkspace.
     ///
-    /// On construction it registers as an Ogre::RenderTargetListener
-    /// on the provided Ogre::RenderTarget, and sets the material scheme name
-    /// to a value that is unlikely to exist.
-    /// When the target is about to be rendered it adds itself as an
-    /// Ogre::MaterialManager::Listener.
-    /// Every time ogre tries to get a technique for a material it will call
-    /// handleSchemeNotFound which returns the first supported technique on the
-    /// material provided to this class's constructor.
+    /// On construction it registers as a CompositorWorkspaceListener on the
+    /// provided workspace and sets the material scheme on every scene pass node
+    /// to a value that is unlikely to exist. When the workspace is about to
+    /// render it adds itself as an Ogre::MaterialManager::Listener so that
+    /// handleSchemeNotFound redirects every material look-up to the supplied
+    /// override material.
+    /// \internal
     class IGNITION_RENDERING_OGRE2_VISIBLE  Ogre2RenderTargetMaterial :
-      public Ogre::RenderTargetListener,
+      public Ogre::CompositorWorkspaceListener,
       public Ogre::MaterialManager::Listener
     {
       /// \brief constructor
       /// \param[in] _scene the scene manager responsible for rendering
-      /// \param[in] _renderTarget the RenderTarget this should apply to
+      /// \param[in] _workspace the CompositorWorkspace this should apply to
       /// \param[in] _material the material to apply to all renderables
       public: Ogre2RenderTargetMaterial(Ogre::SceneManager *_scene,
-          Ogre::RenderTarget *_renderTarget, Ogre::Material *_material);
+          Ogre::CompositorWorkspace *_workspace, Ogre::Material *_material);
 
       /// \brief destructor
       public: ~Ogre2RenderTargetMaterial();
 
-      /// \brief Callback when a render target is about to be rendered
-      /// \param[in] _evt Ogre render target event containing information about
-      /// the source render target.
-      private: virtual void preRenderTargetUpdate(
-          const Ogre::RenderTargetEvent &_evt) override;
+      // Documentation inherited – adds MaterialManager listener before render.
+      public: virtual void workspacePreUpdate(
+          Ogre::CompositorWorkspace *_workspace) override;
 
-      /// \brief Callback when a render target is finisned being rendered
-      /// \param[in] _evt Ogre render target event containing information about
-      /// the source render target.
-      private: virtual void postRenderTargetUpdate(
-          const Ogre::RenderTargetEvent &_evt) override;
+      // Documentation inherited – removes MaterialManager listener after render.
+      public: virtual void workspacePosUpdate(
+          Ogre::CompositorWorkspace *_workspace) override;
 
-      /// \brief Ogre callback that assigned same material to all renderables
-      /// when the requested scheme is not found
-      /// \param[in] _schemeIndex Index of scheme requested
-      /// \param[in] _schemeName Name of scheme requested
-      /// \param[in] _originalMaterial Orignal material that does not contain
-      /// the requested scheme
-      /// \param[in] _lodIndex The material level-of-detail
-      /// \param[in] _rend Pointer to the Ogre::Renderable object requesting
-      /// the use of the techinique
-      /// \return The Ogre material technique to use when scheme is not found.
+      /// \brief Ogre callback that assigns the override material to all
+      /// renderables when the requested scheme is not found.
       public: virtual Ogre::Technique *handleSchemeNotFound(
                   uint16_t _schemeIndex, const Ogre::String &_schemeName,
                   Ogre::Material *_originalMaterial, uint16_t _lodIndex,
@@ -85,8 +71,8 @@ namespace ignition
       /// \brief scene manager responsible for rendering
       private: Ogre::SceneManager *scene = nullptr;
 
-      /// \brief render target that should see a uniform material
-      private: Ogre::RenderTarget *renderTarget = nullptr;
+      /// \brief compositor workspace that should see a uniform material
+      private: Ogre::CompositorWorkspace *workspace = nullptr;
 
       /// \brief material that should be applied to all objects
       private: Ogre::Material *material = nullptr;
