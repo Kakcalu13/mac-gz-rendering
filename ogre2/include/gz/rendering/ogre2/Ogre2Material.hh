@@ -192,10 +192,6 @@ namespace ignition
       protected: virtual void SetTextureMapImpl(const std::string &_texture,
           Ogre::PbsTextureTypes _type);
 
-      /// \brief Get a pointer to the ogre texture by name
-      /// \return Ogre texture
-      protected: virtual Ogre::TexturePtr Texture(const std::string &_name);
-
       /// \brief Updates the material transparency in the engine,
       /// based on transparency and diffuse alpha values
       protected: virtual void UpdateTransparency();
