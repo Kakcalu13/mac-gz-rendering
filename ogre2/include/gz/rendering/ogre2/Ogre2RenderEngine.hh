@@ -34,6 +34,7 @@ namespace Ogre
 {
   class LogManager;
   class Root;
+  class Window;
   namespace v1
   {
     class OverlaySystem;
@@ -107,6 +108,12 @@ namespace ignition
       /// displays)
       /// \param[in] _antiAliasing Anti-aliasing level
       public: std::string CreateRenderWindow(const std::string &_handle,
+                  const unsigned int _width, const unsigned int _height,
+                  const double _ratio, const unsigned int _antiAliasing);
+
+      /// \brief ogre-next 2.3 version: returns Ogre::Window* directly
+      /// \return Pointer to the created window, or nullptr on failure
+      public: Ogre::Window *CreateOgreWindow(const std::string &_handle,
                   const unsigned int _width, const unsigned int _height,
                   const double _ratio, const unsigned int _antiAliasing);
 
