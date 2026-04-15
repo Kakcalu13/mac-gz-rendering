@@ -32,6 +32,8 @@ namespace Ogre
   class Camera;
   class RenderTarget;
   class Texture;
+  class TextureGpu;
+  class Window;
 }
 
 namespace ignition
@@ -93,8 +95,13 @@ namespace ignition
       /// \param[in] _material The material to render
       public: void SetMaterial(MaterialPtr _material);
 
-      /// \brief Get a pointer to the ogre render target
-      public: virtual Ogre::RenderTarget *RenderTarget() const = 0;
+      /// \brief Get a pointer to the ogre TextureGpu used as render target
+      /// (replaces the old Ogre::RenderTarget* in ogre-next 2.3)
+      public: virtual Ogre::TextureGpu *OgreTexture() const = 0;
+
+      /// \brief Compatibility shim – returns nullptr in ogre-next 2.3.
+      ///        Use OgreTexture() for compositor/download operations.
+      public: virtual Ogre::RenderTarget *RenderTarget() const { return nullptr; }
 
       /// \brief Update the render pass chain
       public: static void UpdateRenderPassChain(
@@ -200,8 +207,8 @@ namespace ignition
       // Documentation inherited
       public: virtual unsigned int GLId() const override;
 
-      // Documentation inherited.
-      public: virtual Ogre::RenderTarget *RenderTarget() const override;
+      // Documentation inherited – returns the TextureGpu used as RTT.
+      public: virtual Ogre::TextureGpu *OgreTexture() const override;
 
       // Documentation inherited.
       protected: virtual void RebuildTarget() override;
@@ -212,8 +219,8 @@ namespace ignition
       /// \brief Build the render texture
       protected: virtual void BuildTarget();
 
-      /// \brief Pointer to the internal ogre render texture object
-      protected: Ogre::Texture *ogreTexture = nullptr;
+      /// \brief Pointer to the internal ogre-next 2.3 TextureGpu render target
+      protected: Ogre::TextureGpu *ogreTexture = nullptr;
 
       /// \brief Make scene our friend so it can create a ogre2 render texture
       private: friend class Ogre2Scene;
@@ -232,8 +239,8 @@ namespace ignition
       // Documentation inherited.
       public: virtual void Destroy() override;
 
-      // Documentation inherited.
-      public: virtual Ogre::RenderTarget *RenderTarget() const override;
+      // Documentation inherited – returns the window's TextureGpu.
+      public: virtual Ogre::TextureGpu *OgreTexture() const override;
 
       // Documentation inherited.
       protected: virtual void RebuildTarget() override;
@@ -241,8 +248,8 @@ namespace ignition
       /// \brief Build the render window
       protected: virtual void BuildTarget();
 
-      /// \brief Pointer to the internal ogre render target object
-      protected: Ogre::RenderTarget *ogreRenderWindow = nullptr;
+      /// \brief Pointer to the ogre-next 2.3 Window object
+      protected: Ogre::Window *ogreWindow = nullptr;
 
       /// \brief Make scene our friend so it can create a ogre2 render window
       private: friend class Ogre2Scene;
