@@ -181,7 +181,8 @@ void Ogre2Material::SetTexture(const std::string &_name)
 void Ogre2Material::ClearTexture()
 {
   this->textureName = "";
-  this->ogreDatablock->setTexture(Ogre::PBSM_DIFFUSE, 0, Ogre::TexturePtr());
+  this->ogreDatablock->setTexture(Ogre::PBSM_DIFFUSE,
+      static_cast<Ogre::TextureGpu *>(nullptr));
 }
 
 //////////////////////////////////////////////////
@@ -213,7 +214,8 @@ void Ogre2Material::SetNormalMap(const std::string &_name)
 void Ogre2Material::ClearNormalMap()
 {
   this->normalMapName = "";
-  this->ogreDatablock->setTexture(Ogre::PBSM_NORMAL, 0, Ogre::TexturePtr());
+  this->ogreDatablock->setTexture(Ogre::PBSM_NORMAL,
+      static_cast<Ogre::TextureGpu *>(nullptr));
 }
 
 //////////////////////////////////////////////////
@@ -245,7 +247,8 @@ void Ogre2Material::SetRoughnessMap(const std::string &_name)
 void Ogre2Material::ClearRoughnessMap()
 {
   this->roughnessMapName = "";
-  this->ogreDatablock->setTexture(Ogre::PBSM_ROUGHNESS, 0, Ogre::TexturePtr());
+  this->ogreDatablock->setTexture(Ogre::PBSM_ROUGHNESS,
+      static_cast<Ogre::TextureGpu *>(nullptr));
 }
 
 //////////////////////////////////////////////////
@@ -277,7 +280,8 @@ void Ogre2Material::SetMetalnessMap(const std::string &_name)
 void Ogre2Material::ClearMetalnessMap()
 {
   this->metalnessMapName = "";
-  this->ogreDatablock->setTexture(Ogre::PBSM_METALLIC, 0, Ogre::TexturePtr());
+  this->ogreDatablock->setTexture(Ogre::PBSM_METALLIC,
+      static_cast<Ogre::TextureGpu *>(nullptr));
 }
 
 //////////////////////////////////////////////////
@@ -309,7 +313,8 @@ void Ogre2Material::SetEnvironmentMap(const std::string &_name)
 void Ogre2Material::ClearEnvironmentMap()
 {
   this->environmentMapName = "";
-  this->ogreDatablock->setTexture(Ogre::PBSM_REFLECTION, 0, Ogre::TexturePtr());
+  this->ogreDatablock->setTexture(Ogre::PBSM_REFLECTION,
+      static_cast<Ogre::TextureGpu *>(nullptr));
 }
 
 //////////////////////////////////////////////////
@@ -341,7 +346,8 @@ void Ogre2Material::SetEmissiveMap(const std::string &_name)
 void Ogre2Material::ClearEmissiveMap()
 {
   this->emissiveMapName = "";
-  this->ogreDatablock->setTexture(Ogre::PBSM_EMISSIVE, 0, Ogre::TexturePtr());
+  this->ogreDatablock->setTexture(Ogre::PBSM_EMISSIVE,
+      static_cast<Ogre::TextureGpu *>(nullptr));
 }
 
 //////////////////////////////////////////////////
@@ -430,31 +436,14 @@ void Ogre2Material::SetTextureMapImpl(const std::string &_texture,
     }
   }
 
-  Ogre::HlmsTextureManager *hlmsTextureManager =
-      this->ogreHlmsPbs->getHlmsManager()->getTextureManager();
-  Ogre::HlmsTextureManager::TextureLocation texLocation =
-      hlmsTextureManager->createOrRetrieveTexture(baseName,
-      this->ogreDatablock->suggestMapTypeBasedOnTextureType(_type));
-
+  // ogre-next 2.3: HlmsTextureManager was removed.
+  // Use HlmsPbsDatablock::setTexture(type, name, sampler) directly.
   Ogre::HlmsSamplerblock samplerBlockRef;
   samplerBlockRef.mU = Ogre::TAM_WRAP;
   samplerBlockRef.mV = Ogre::TAM_WRAP;
   samplerBlockRef.mW = Ogre::TAM_WRAP;
 
-  this->ogreDatablock->setTexture(_type, texLocation.xIdx, texLocation.texture,
-      &samplerBlockRef);
-}
-
-//////////////////////////////////////////////////
-Ogre::TexturePtr Ogre2Material::Texture(const std::string &_name)
-{
-  Ogre::HlmsTextureManager *hlmsTextureManager =
-      this->ogreHlmsPbs->getHlmsManager()->getTextureManager();
-  Ogre::HlmsTextureManager::TextureLocation texLocation =
-      hlmsTextureManager->createOrRetrieveTexture(_name,
-      Ogre::HlmsTextureManager::TEXTURE_TYPE_DIFFUSE);
-
-  return texLocation.texture;
+  this->ogreDatablock->setTexture(_type, baseName, &samplerBlockRef);
 }
 
 //////////////////////////////////////////////////
