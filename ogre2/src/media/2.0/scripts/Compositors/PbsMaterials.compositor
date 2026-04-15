@@ -1,11 +1,11 @@
 compositor_node PbsMaterialsRenderingNode
 {
   // rt0 - original scene
-  texture rt0 target_width target_height PF_R8G8B8
+  texture rt0 target_width target_height PFG_RGBA8_UNORM
   // rt1 - texture to be passed to the next compositor node for
   // adding render pass effect. Note: it seems that a clear pass is not needed
   // for rt1
-  texture rt1 target_width target_height PF_R8G8B8
+  texture rt1 target_width target_height PFG_RGBA8_UNORM
 
   target rt0
   {
