@@ -40,8 +40,8 @@ namespace rendering
 inline namespace IGNITION_RENDERING_VERSION_NAMESPACE {
 //
 /// \brief Helper class for switching the ogre item's material to laser retro
-/// source material when a thermal camera is being rendered.
-class Ogre2LaserRetroMaterialSwitcher : public Ogre::RenderTargetListener
+/// source material when a gpu rays camera is being rendered.
+class Ogre2LaserRetroMaterialSwitcher : public Ogre::CompositorWorkspaceListener
 {
   /// \brief constructor
   /// \param[in] _scene the scene manager responsible for rendering
@@ -50,17 +50,15 @@ class Ogre2LaserRetroMaterialSwitcher : public Ogre::RenderTargetListener
   /// \brief destructor
   public: ~Ogre2LaserRetroMaterialSwitcher() = default;
 
-  /// \brief Callback when a render target is about to be rendered
-  /// \param[in] _evt Ogre render target event containing information about
-  /// the source render target.
-  private: virtual void preRenderTargetUpdate(
-      const Ogre::RenderTargetEvent &_evt) override;
+  // Documentation inherited – switches items to laser retro material
+  // before the workspace renders.
+  public: virtual void workspacePreUpdate(
+      Ogre::CompositorWorkspace *_workspace) override;
 
-  /// \brief Callback when a render target is finisned being rendered
-  /// \param[in] _evt Ogre render target event containing information about
-  /// the source render target.
-  private: virtual void postRenderTargetUpdate(
-      const Ogre::RenderTargetEvent &_evt) override;
+  // Documentation inherited – restores original item materials
+  // after the workspace finishes rendering.
+  public: virtual void workspacePosUpdate(
+      Ogre::CompositorWorkspace *_workspace) override;
 
   /// \brief Scene manager
   private: Ogre2ScenePtr scene = nullptr;
@@ -110,8 +108,8 @@ class gz::rendering::Ogre2GpuRaysPrivate
   /// \brief Cubemap cameras
   public: Ogre::Camera *cubeCam[6];
 
-  /// \brief Texture packed with cubemap face and uv data
-  public: Ogre::TexturePtr cubeUVTexture;
+  /// \brief Texture packed with cubemap face and uv data (ogre-next 2.3 TextureGpu)
+  public: Ogre::TextureGpu *cubeUVTexture = nullptr;
 
   /// \brief Set of cubemap faces that are needed to generate the final
   /// range data
@@ -136,10 +134,10 @@ class gz::rendering::Ogre2GpuRaysPrivate
   public: Ogre::CompositorWorkspace *ogreCompositorWorkspace2nd = nullptr;
 
   /// \brief An array of first pass textures. One for each cubemap camera.
-  public: Ogre::TexturePtr firstPassTextures[6];
+  public: Ogre::TextureGpu *firstPassTextures[6] = {};
 
   /// \brief Second pass texture.
-  public: Ogre::TexturePtr secondPassTexture;
+  public: Ogre::TextureGpu *secondPassTexture = nullptr;
 
   /// \brief Pointer to the ogre camera
   public: Ogre::Camera *ogreCamera = nullptr;
@@ -183,8 +181,8 @@ Ogre2LaserRetroMaterialSwitcher::Ogre2LaserRetroMaterialSwitcher(
 }
 
 //////////////////////////////////////////////////
-void Ogre2LaserRetroMaterialSwitcher::preRenderTargetUpdate(
-    const Ogre::RenderTargetEvent & /*_evt*/)
+void Ogre2LaserRetroMaterialSwitcher::workspacePreUpdate(
+    Ogre::CompositorWorkspace * /*_workspace*/)
 {
   // swap item to use v1 shader material
   // Note: keep an eye out for performance impact on switching materials
@@ -273,8 +271,8 @@ void Ogre2LaserRetroMaterialSwitcher::preRenderTargetUpdate(
   }
 
 //////////////////////////////////////////////////
-void Ogre2LaserRetroMaterialSwitcher::postRenderTargetUpdate(
-    const Ogre::RenderTargetEvent & /*_evt*/)
+void Ogre2LaserRetroMaterialSwitcher::workspacePosUpdate(
+    Ogre::CompositorWorkspace * /*_workspace*/)
 {
   // restore item to use hlms material
   for (auto it : this->datablockMap)
@@ -333,25 +331,25 @@ void Ogre2GpuRays::Destroy()
     this->dataPtr->gpuRaysScan = nullptr;
   }
 
-  if (this->dataPtr->cubeUVTexture)
-  {
-    Ogre::TextureManager::getSingleton().remove(
-        this->dataPtr->cubeUVTexture->getName());
-    this->dataPtr->cubeUVTexture.reset();
-  }
-
   auto engine = Ogre2RenderEngine::Instance();
   auto ogreRoot = engine->OgreRoot();
   Ogre::CompositorManager2 *ogreCompMgr = ogreRoot->getCompositorManager2();
+  Ogre::TextureGpuManager *texMgr =
+      ogreRoot->getRenderSystem()->getTextureGpuManager();
+
+  if (this->dataPtr->cubeUVTexture)
+  {
+    texMgr->destroyTexture(this->dataPtr->cubeUVTexture);
+    this->dataPtr->cubeUVTexture = nullptr;
+  }
 
   // remove 1st pass textures, material, compositors
   for (auto i : this->dataPtr->cubeFaceIdx)
   {
     if (this->dataPtr->firstPassTextures[i])
     {
-      Ogre::TextureManager::getSingleton().remove(
-          this->dataPtr->firstPassTextures[i]->getName());
-      this->dataPtr->firstPassTextures[i].reset();
+      texMgr->destroyTexture(this->dataPtr->firstPassTextures[i]);
+      this->dataPtr->firstPassTextures[i] = nullptr;
     }
     if (this->dataPtr->ogreCompositorWorkspace1st[i])
     {
@@ -379,9 +377,8 @@ void Ogre2GpuRays::Destroy()
   // remove 2nd pass texture, material, compositor
   if (this->dataPtr->secondPassTexture)
   {
-    Ogre::TextureManager::getSingleton().remove(
-        this->dataPtr->secondPassTexture->getName());
-    this->dataPtr->secondPassTexture.reset();
+    texMgr->destroyTexture(this->dataPtr->secondPassTexture);
+    this->dataPtr->secondPassTexture = nullptr;
   }
 
   if (this->dataPtr->matSecondPass)
@@ -526,21 +523,27 @@ void Ogre2GpuRays::CreateSampleTexture()
   //   B: cubemap face index
   // this texture is passed to the 2nd pass fragment shader
   std::string texName = this->Name() + "_samplerTex";
-  this->dataPtr->cubeUVTexture =
-      Ogre::TextureManager::getSingleton().createManual(
-          texName,
-          "General",
-          Ogre::TEX_TYPE_2D,
-          this->dataPtr->w2nd,
-          this->dataPtr->h2nd,
-          0,
-          Ogre::PF_FLOAT32_RGB);
-  Ogre::v1::HardwarePixelBufferSharedPtr pixelBuffer =
-      this->dataPtr->cubeUVTexture->getBuffer();
-  // fill the texture
-  pixelBuffer->lock(Ogre::v1::HardwareBuffer::HBL_NORMAL);
-  const Ogre::PixelBox &pixelBox = pixelBuffer->getCurrentLock();
-  float *pDest = static_cast<float *>(pixelBox.data);
+  auto engine = Ogre2RenderEngine::Instance();
+  Ogre::TextureGpuManager *texMgr =
+      engine->OgreRoot()->getRenderSystem()->getTextureGpuManager();
+
+  this->dataPtr->cubeUVTexture = texMgr->createTexture(
+      texName,
+      Ogre::GpuPageOutStrategy::Discard,
+      Ogre::TextureFlags::ManualTexture,
+      Ogre::TextureTypes::Type2D);
+  this->dataPtr->cubeUVTexture->setResolution(
+      this->dataPtr->w2nd, this->dataPtr->h2nd);
+  this->dataPtr->cubeUVTexture->setNumMipmaps(1u);
+  this->dataPtr->cubeUVTexture->setPixelFormat(Ogre::PFG_RGB32_FLOAT);
+  this->dataPtr->cubeUVTexture->scheduleTransitionTo(
+      Ogre::GpuResidency::Resident);
+
+  // Build UV data in a local buffer first
+  const size_t numPixels =
+      static_cast<size_t>(this->dataPtr->w2nd) * this->dataPtr->h2nd;
+  std::vector<float> uvData(numPixels * 3u);
+  float *pDest = uvData.data();
 
   double v = vmin;
   for (unsigned int i = 0; i < this->dataPtr->h2nd; ++i)
@@ -557,12 +560,10 @@ void Ogre2GpuRays::CreateSampleTexture()
       unsigned int faceIdx;
       math::Vector2d uv = this->SampleCubemap(dir, faceIdx);
       this->dataPtr->cubeFaceIdx.insert(faceIdx);
-      // igndbg << "p(" << pitch << ") y(" << yaw << "): " << dir << " | "
-      //       << uv << " | " << faceIdx << std::endl;
       // u
-      *pDest++ = uv.X();
+      *pDest++ = static_cast<float>(uv.X());
       // v
-      *pDest++ = uv.Y();
+      *pDest++ = static_cast<float>(uv.Y());
       // face
       *pDest++ = static_cast<float>(faceIdx);
 
@@ -571,7 +572,18 @@ void Ogre2GpuRays::CreateSampleTexture()
     v += vStep;
   }
 
-  pixelBuffer->unlock();
+  // Upload via StagingTexture
+  Ogre::StagingTexture *stagingTex = texMgr->getStagingTexture(
+      this->dataPtr->w2nd, this->dataPtr->h2nd,
+      1u, 1u, Ogre::PFG_RGB32_FLOAT);
+  stagingTex->startMapRegion();
+  Ogre::TextureBox dstBox = stagingTex->mapRegion(
+      this->dataPtr->w2nd, this->dataPtr->h2nd,
+      1u, 1u, Ogre::PFG_RGB32_FLOAT);
+  memcpy(dstBox.data, uvData.data(), uvData.size() * sizeof(float));
+  stagingTex->stopMapRegion();
+  stagingTex->upload(dstBox, this->dataPtr->cubeUVTexture, 0u, nullptr, nullptr, true);
+  texMgr->removeStagingTexture(stagingTex);
 }
 
 /////////////////////////////////////////////////////////
@@ -661,41 +673,32 @@ void Ogre2GpuRays::Setup1stPass()
         Ogre::TextureDefinitionBase::TEXTURE_INPUT);
     Ogre::TextureDefinitionBase::TextureDefinition *depthTexDef =
         nodeDef->addTextureDefinition("depthTexture");
-    depthTexDef->textureType = Ogre::TEX_TYPE_2D;
+    depthTexDef->textureType = Ogre::TextureTypes::Type2D;
     depthTexDef->width = 0;
     depthTexDef->height = 0;
-    depthTexDef->depth = 1;
-    depthTexDef->numMipmaps = 0;
+    depthTexDef->depthOrSlices = 1;
+    depthTexDef->numMipmaps = 1;
     depthTexDef->widthFactor = 1;
     depthTexDef->heightFactor = 1;
-    depthTexDef->formatList = {Ogre::PF_D32_FLOAT};
-    depthTexDef->fsaa = 0;
-    depthTexDef->uav = false;
-    depthTexDef->automipmaps = false;
-    depthTexDef->hwGammaWrite = Ogre::TextureDefinitionBase::BoolFalse;
+    depthTexDef->format = Ogre::PFG_D32_FLOAT;
+    depthTexDef->fsaa = "1";
     depthTexDef->depthBufferId = Ogre::DepthBuffer::POOL_DEFAULT;
-
-    depthTexDef->depthBufferFormat = Ogre::PF_UNKNOWN;
-    depthTexDef->fsaaExplicitResolve = false;
+    depthTexDef->depthBufferFormat = Ogre::PFG_UNKNOWN;
 
     Ogre::TextureDefinitionBase::TextureDefinition *colorTexDef =
         nodeDef->addTextureDefinition("colorTexture");
-    colorTexDef->textureType = Ogre::TEX_TYPE_2D;
+    colorTexDef->textureType = Ogre::TextureTypes::Type2D;
     colorTexDef->width = 0;
     colorTexDef->height = 0;
-    colorTexDef->depth = 1;
-    colorTexDef->numMipmaps = 0;
+    colorTexDef->depthOrSlices = 1;
+    colorTexDef->numMipmaps = 1;
     colorTexDef->widthFactor = 1;
     colorTexDef->heightFactor = 1;
-    colorTexDef->formatList = {Ogre::PF_R8G8B8};
-    colorTexDef->fsaa = 0;
-    colorTexDef->uav = false;
-    colorTexDef->automipmaps = false;
-    colorTexDef->hwGammaWrite = Ogre::TextureDefinitionBase::BoolFalse;
+    colorTexDef->format = Ogre::PFG_RGBA8_UNORM;
+    colorTexDef->fsaa = "1";
     colorTexDef->depthBufferId = Ogre::DepthBuffer::POOL_DEFAULT;
-    colorTexDef->depthBufferFormat = Ogre::PF_D32_FLOAT;
+    colorTexDef->depthBufferFormat = Ogre::PFG_D32_FLOAT;
     colorTexDef->preferDepthTexture = true;
-    colorTexDef->fsaaExplicitResolve = false;
 
     nodeDef->setNumTargetPass(2);
 
@@ -707,7 +710,7 @@ void Ogre2GpuRays::Setup1stPass()
       Ogre::CompositorPassClearDef *passClear =
           static_cast<Ogre::CompositorPassClearDef *>(
           colorTargetDef->addPass(Ogre::PASS_CLEAR));
-      passClear->mColourValue = Ogre::ColourValue(0, 0, 0);
+      passClear->mClearColour[0] = Ogre::ColourValue(0, 0, 0);
       // scene pass
       Ogre::CompositorPassSceneDef *passScene =
           static_cast<Ogre::CompositorPassSceneDef *>(
@@ -725,14 +728,14 @@ void Ogre2GpuRays::Setup1stPass()
       Ogre::CompositorPassClearDef *passClear =
           static_cast<Ogre::CompositorPassClearDef *>(
           inputTargetDef->addPass(Ogre::PASS_CLEAR));
-      passClear->mColourValue = Ogre::ColourValue(this->dataMaxVal, 0, 1.0);
+      passClear->mClearColour[0] = Ogre::ColourValue(this->dataMaxVal, 0, 1.0);
       // quad pass
       Ogre::CompositorPassQuadDef *passQuad =
           static_cast<Ogre::CompositorPassQuadDef *>(
           inputTargetDef->addPass(Ogre::PASS_QUAD));
       passQuad->mMaterialName = this->dataPtr->matFirstPass->getName();
-      passQuad->addQuadTextureSource(0, "depthTexture", 0);
-      passQuad->addQuadTextureSource(1, "colorTexture", 0);
+      passQuad->addQuadTextureSource(0, "depthTexture");
+      passQuad->addQuadTextureSource(1, "colorTexture");
       passQuad->mFrustumCorners =
           Ogre::CompositorPassQuadDef::VIEW_SPACE_CORNERS;
     }
@@ -782,38 +785,33 @@ void Ogre2GpuRays::Setup1stPass()
     // that will be used in the 2nd pass
     std::stringstream texName;
     texName << this->Name() << "_first_pass_" << i;
-    this->dataPtr->firstPassTextures[i] =
-      Ogre::TextureManager::getSingleton().createManual(
-      texName.str(), "General", Ogre::TEX_TYPE_2D,
-      this->dataPtr->w1st, this->dataPtr->h1st, 1, 0,
-      Ogre::PF_FLOAT32_RGB, Ogre::TU_RENDERTARGET,
-      0, false, 0, Ogre::BLANKSTRING, false, true);
+    {
+      Ogre::TextureGpuManager *texMgr =
+          ogreRoot->getRenderSystem()->getTextureGpuManager();
+      this->dataPtr->firstPassTextures[i] = texMgr->createTexture(
+          texName.str(),
+          Ogre::GpuPageOutStrategy::Discard,
+          Ogre::TextureFlags::RenderToTexture,
+          Ogre::TextureTypes::Type2D);
+      this->dataPtr->firstPassTextures[i]->setResolution(
+          this->dataPtr->w1st, this->dataPtr->h1st);
+      this->dataPtr->firstPassTextures[i]->setNumMipmaps(1u);
+      this->dataPtr->firstPassTextures[i]->setPixelFormat(Ogre::PFG_RGB32_FLOAT);
+      this->dataPtr->firstPassTextures[i]->scheduleTransitionTo(
+          Ogre::GpuResidency::Resident);
+    }
 
-    Ogre::RenderTarget *rt =
-        this->dataPtr->firstPassTextures[i]->getBuffer()->getRenderTarget();
-    // create compositor worksspace
+    // create compositor workspace
     this->dataPtr->ogreCompositorWorkspace1st[i] =
         ogreCompMgr->addWorkspace(this->scene->OgreSceneManager(),
-        rt, this->dataPtr->cubeCam[i], wsDefName, false);
+        this->dataPtr->firstPassTextures[i],
+        this->dataPtr->cubeCam[i], wsDefName, false);
 
-    // add laser retro material switcher to render target listener
-    // so we can switch to use laser retro material when the camera is being
-    // updated
-    Ogre::CompositorNode *node =
-        this->dataPtr->ogreCompositorWorkspace1st[i]->getNodeSequence()[0];
-    auto channelsTex = node->getLocalTextures();
-
-    for (auto c : channelsTex)
-    {
-      if (c.textures[0]->getSrcFormat() == Ogre::PF_R8G8B8)
-      {
-        this->dataPtr->laserRetroMaterialSwitcher[i].reset(
-            new Ogre2LaserRetroMaterialSwitcher(this->scene));
-        c.target->addListener(
-            this->dataPtr->laserRetroMaterialSwitcher[i].get());
-        break;
-      }
-    }
+    // add laser retro material switcher as compositor workspace listener
+    this->dataPtr->laserRetroMaterialSwitcher[i].reset(
+        new Ogre2LaserRetroMaterialSwitcher(this->scene));
+    this->dataPtr->ogreCompositorWorkspace1st[i]->addListener(
+        this->dataPtr->laserRetroMaterialSwitcher[i].get());
   }
 }
 
@@ -822,14 +820,22 @@ void Ogre2GpuRays::Setup2ndPass()
 {
   // Create second pass RTT, which stores the final range data output
   // see PostRender on how we retrieve data from this texture
-  this->dataPtr->secondPassTexture =
-      Ogre::TextureManager::getSingleton().createManual(
-      this->Name() + "_second_pass",
-      "General",
-      Ogre::TEX_TYPE_2D,
-      this->dataPtr->w2nd, this->dataPtr->h2nd, 0,
-      Ogre::PF_FLOAT32_RGB,
-      Ogre::TU_RENDERTARGET);
+  {
+    auto engine2 = Ogre2RenderEngine::Instance();
+    Ogre::TextureGpuManager *texMgr2 =
+        engine2->OgreRoot()->getRenderSystem()->getTextureGpuManager();
+    this->dataPtr->secondPassTexture = texMgr2->createTexture(
+        this->Name() + "_second_pass",
+        Ogre::GpuPageOutStrategy::Discard,
+        Ogre::TextureFlags::RenderToTexture,
+        Ogre::TextureTypes::Type2D);
+    this->dataPtr->secondPassTexture->setResolution(
+        this->dataPtr->w2nd, this->dataPtr->h2nd);
+    this->dataPtr->secondPassTexture->setNumMipmaps(1u);
+    this->dataPtr->secondPassTexture->setPixelFormat(Ogre::PFG_RGB32_FLOAT);
+    this->dataPtr->secondPassTexture->scheduleTransitionTo(
+        Ogre::GpuResidency::Resident);
+  }
 
   // Create second pass material
   // The GpuRaysScan2nd material is defined in script (gpu_rays.material).
@@ -905,7 +911,7 @@ void Ogre2GpuRays::Setup2ndPass()
       Ogre::CompositorPassClearDef *passClear =
           static_cast<Ogre::CompositorPassClearDef *>(
           inputTargetDef->addPass(Ogre::PASS_CLEAR));
-      passClear->mColourValue = Ogre::ColourValue(this->dataMaxVal, 0, 1.0);
+      passClear->mClearColour[0] = Ogre::ColourValue(this->dataMaxVal, 0, 1.0);
       // quad pass - sample from cubemap textures
       Ogre::CompositorPassQuadDef *passQuad =
           static_cast<Ogre::CompositorPassQuadDef *>(
@@ -927,11 +933,10 @@ void Ogre2GpuRays::Setup2ndPass()
   }
 
   // create the compositor workspace
-  Ogre::RenderTarget *rt =
-      this->dataPtr->secondPassTexture->getBuffer()->getRenderTarget();
   this->dataPtr->ogreCompositorWorkspace2nd =
       ogreCompMgr->addWorkspace(this->scene->OgreSceneManager(),
-      rt, this->dataPtr->ogreCamera, wsDefName, false);
+      this->dataPtr->secondPassTexture,
+      this->dataPtr->ogreCamera, wsDefName, false);
 }
 
 /////////////////////////////////////////////////////////
@@ -984,20 +989,30 @@ void Ogre2GpuRays::PostRender()
   unsigned int width = this->dataPtr->w2nd;
   unsigned int height = this->dataPtr->h2nd;
 
-  size_t size = Ogre::PixelUtil::getMemorySize(
-    width, height, 1, Ogre::PF_FLOAT32_RGB);
+  // RGB32_FLOAT: 3 floats per pixel
   int len = width * height * this->Channels();
+  size_t size = static_cast<size_t>(len) * sizeof(float);
 
   if (!this->dataPtr->gpuRaysBuffer)
   {
     this->dataPtr->gpuRaysBuffer = new float[len];
   }
-  Ogre::PixelBox dstBox(width, height,
-        1, Ogre::PF_FLOAT32_RGB, this->dataPtr->gpuRaysBuffer);
 
-  // blit data from gpu to cpu
-  auto rt = this->dataPtr->secondPassTexture->getBuffer()->getRenderTarget();
-  rt->copyContentsToMemory(dstBox, Ogre::RenderTarget::FB_FRONT);
+  // blit data from gpu to cpu using AsyncTextureTicket
+  {
+    auto engine = Ogre2RenderEngine::Instance();
+    Ogre::TextureGpuManager *texMgr =
+        engine->OgreRoot()->getRenderSystem()->getTextureGpuManager();
+    Ogre::AsyncTextureTicket *ticket = texMgr->createAsyncTextureTicket(
+        width, height, 1u, Ogre::TextureTypes::Type2D,
+        Ogre::PFG_RGB32_FLOAT);
+    ticket->download(this->dataPtr->secondPassTexture, 0u, true);
+    Ogre::TextureBox box = ticket->map(0u);
+    if (box.data)
+      memcpy(this->dataPtr->gpuRaysBuffer, box.data, size);
+    ticket->unmap();
+    texMgr->destroyAsyncTextureTicket(ticket);
+  }
 
   if (!this->dataPtr->gpuRaysScan)
   {
@@ -1035,8 +1050,8 @@ void Ogre2GpuRays::Copy(float *_dataDest)
   unsigned int width = this->dataPtr->w2nd;
   unsigned int height = this->dataPtr->h2nd;
 
-  size_t size = Ogre::PixelUtil::getMemorySize(
-    width, height, 1, Ogre::PF_FLOAT32_RGB);
+  size_t size = Ogre::PixelFormatGpuUtils::getSizeBytes(
+    width, height, 1u, 1u, Ogre::PFG_RGB32_FLOAT, 1u);
 
   memcpy(_dataDest, this->dataPtr->gpuRaysScan, size);
 }
