@@ -38,7 +38,7 @@ namespace ignition
 
     /// \brief Helper class to assign unique colors to renderables
     class IGNITION_RENDERING_OGRE2_VISIBLE Ogre2MaterialSwitcher :
-      public Ogre::RenderTargetListener
+      public Ogre::CompositorWorkspaceListener
     {
       /// \brief Constructor
       public: explicit Ogre2MaterialSwitcher(Ogre2ScenePtr _scene);
@@ -54,17 +54,15 @@ namespace ignition
       /// \brief Reset the color value incrementor
       public: void Reset();
 
-      /// \brief Ogre's pre render update callback
-      /// \param[in] _evt Ogre render target event containing information about
-      /// the source render target.
-      public: virtual void preRenderTargetUpdate(
-                  const Ogre::RenderTargetEvent &_evt);
+      // Documentation inherited – switches all item materials to unique colors
+      // before the workspace renders.
+      public: virtual void workspacePreUpdate(
+                  Ogre::CompositorWorkspace *_workspace) override;
 
-      /// \brief Ogre's post render update callback
-      /// \param[in] _evt Ogre render target event containing information about
-      /// the source render target.
-      public: virtual void postRenderTargetUpdate(
-                  const Ogre::RenderTargetEvent &_evt);
+      // Documentation inherited – restores original item materials
+      // after the workspace finishes rendering.
+      public: virtual void workspacePosUpdate(
+                  Ogre::CompositorWorkspace *_workspace) override;
 
       /// \brief Current unique color value
       private: gz::math::Color currentColor;
