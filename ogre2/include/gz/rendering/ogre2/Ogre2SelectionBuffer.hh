@@ -26,7 +26,6 @@
 namespace Ogre
 {
   class Item;
-  class RenderTarget;
   class SceneManager;
 }
 
