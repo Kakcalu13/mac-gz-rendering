@@ -93,13 +93,13 @@ namespace ignition
       /// \return Ogre Matrix4
       public: static Ogre::Matrix4 Convert(const math::Matrix4d &_m);
 
-      /// \brief Ign-rendering PixelFormat to Ogre PixelFormat
+      /// \brief Ign-rendering PixelFormat to Ogre PixelFormatGpu
       /// \param[in] _format Ign-rendering PixelFormat
-      /// return Ogre PixelFormat
-      public: static Ogre::PixelFormat Convert(PixelFormat _format);
+      /// \return ogre-next GPU pixel format
+      public: static Ogre::PixelFormatGpu Convert(PixelFormat _format);
 
-      /// \brief A list of ogre pixel formats
-      private: static const Ogre::PixelFormat ogrePixelFormats[PF_COUNT];
+      /// \brief A list of ogre GPU pixel formats indexed by gz PixelFormat
+      private: static const Ogre::PixelFormatGpu ogrePixelFormats[PF_COUNT];
     };
     /// \}
     }
