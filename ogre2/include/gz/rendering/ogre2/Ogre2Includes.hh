@@ -27,12 +27,11 @@
 // This prevents some deprecation #warning messages on OSX 10.9
 #pragma clang diagnostic ignored "-W#warnings"
 
+// ogre-next 2.3: core headers (Ogre.h no longer pulls everything in)
 #include <Ogre.h>
 #include <OgreBillboard.h>
-#include <OgreImageCodec.h>
 #include <OgreMovableObject.h>
 #include <OgreRenderable.h>
-#include <OgreRenderWindow.h>
 #include <OgrePlugin.h>
 #include <OgreDataStream.h>
 #include <OgreLogManager.h>
@@ -56,21 +55,34 @@
 #include <OgreNode.h>
 #include <OgreSimpleRenderable.h>
 #include <OgreFrameListener.h>
-#include <OgreTexture.h>
-#include <OgreRectangle2D.h>
 #include <OgreRenderObjectListener.h>
-#include <OgreTechnique.h>
-#include <OgrePass.h>
 #include <OgreOldSkeletonManager.h>
+#include <Animation/OgreSkeletonInstance.h>
 #include <OgreTextureUnitState.h>
 #include <OgreGpuProgramManager.h>
 #include <OgreHighLevelGpuProgramManager.h>
-#include <OgreHardwarePixelBuffer.h>
 #include <OgreShadowCameraSetupPSSM.h>
+
+// ogre-next 2.3: new texture GPU management
+#include <OgreTextureGpu.h>
+#include <OgreTextureGpuManager.h>
+#include <OgreTextureBox.h>
+#include <OgrePixelFormatGpu.h>
+#include <OgrePixelFormatGpuUtils.h>
+#include <OgreStagingTexture.h>
+#include <OgreAsyncTextureTicket.h>
+#include <OgrePlatformInformation.h>
+#include <OgreWindow.h>
+#include <Vao/OgreVaoManager.h>
+
+#include <OgreTechnique.h>
+#include <OgrePass.h>
 #include <OgreDepthBuffer.h>
+// OgreRectangle2D: ogre-next 2.3 renamed this to OgreRectangle2D2
+#include <OgreRectangle2D2.h>
 
 #include <OgreHlmsManager.h>
-#include <OgreHlmsTextureManager.h>
+// OgreHlmsTextureManager was removed in ogre-next 2.2+; use TextureGpuManager instead
 #include <Hlms/Unlit/OgreHlmsUnlit.h>
 #include <Hlms/Pbs/OgreHlmsPbs.h>
 
@@ -79,16 +91,14 @@
 #include <Compositor/OgreCompositorNodeDef.h>
 #include <Compositor/OgreCompositorShadowNode.h>
 #include <Compositor/OgreCompositorWorkspace.h>
+#include <Compositor/OgreCompositorWorkspaceListener.h>
 #include <Compositor/Pass/PassClear/OgreCompositorPassClearDef.h>
+#include <Compositor/Pass/PassClear/OgreCompositorPassClear.h>
 #include <Compositor/Pass/PassQuad/OgreCompositorPassQuadDef.h>
 #include <Compositor/Pass/PassScene/OgreCompositorPassSceneDef.h>
+#include <OgreRenderPassDescriptor.h>
 
-#include <Overlay/OgreOverlayPrerequisites.h>
-#include <Overlay/OgreOverlayManager.h>
-#include <Overlay/OgreOverlayElement.h>
-#include <Overlay/OgreOverlayContainer.h>
-#include <Overlay/OgreFontManager.h>
-#include <Overlay/OgreOverlaySystem.h>
+// Overlay component not built with this ogre-next installation; omit overlay headers
 
 // TODO(anyone): enable when ogre 2.1 fully supports paging
 // and terrain components
