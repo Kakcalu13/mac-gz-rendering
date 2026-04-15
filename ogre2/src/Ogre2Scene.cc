@@ -154,8 +154,9 @@ void Ogre2Scene::Destroy()
 
   if (this->ogreSceneManager)
   {
-    this->ogreSceneManager->removeRenderQueueListener(
-        Ogre2RenderEngine::Instance()->OverlaySystem());
+    // Overlay system not built — skip removeRenderQueueListener for OverlaySystem
+    // this->ogreSceneManager->removeRenderQueueListener(
+    //     Ogre2RenderEngine::Instance()->OverlaySystem());
   }
 }
 
@@ -444,36 +445,28 @@ void Ogre2Scene::CreateContext()
 {
   Ogre::Root *root = Ogre2RenderEngine::Instance()->OgreRoot();
 
-  Ogre::InstancingThreadedCullingMethod threadedCullingMethod =
-      Ogre::INSTANCING_CULLING_SINGLETHREAD;
-  // getNumLogicalCores() may return 0 if couldn't detect
+  // ogre-next 2.3: numWorkerThreads — getNumLogicalCores() may return 0
   const size_t numThreads = std::max<size_t>(
       1, Ogre::PlatformInformation::getNumLogicalCores());
 
-  // See ogre doxygen documentation regarding culling methods.
-  // In some cases you may still want to use single thread.
-  // if( numThreads > 1 )
-  //   threadedCullingMethod = Ogre::INSTANCING_CULLING_THREADED;
-  // Create the SceneManager, in this case a generic one
+  // Create the SceneManager (ogre-next 2.3: no threadedCullingMethod arg)
   this->ogreSceneManager = root->createSceneManager(Ogre::ST_GENERIC,
-                                                    numThreads,
-                                                    threadedCullingMethod);
+                                                    numThreads);
 
-  this->ogreSceneManager->addRenderQueueListener(
-      Ogre2RenderEngine::Instance()->OverlaySystem());
-
-  this->ogreSceneManager->getRenderQueue()->setSortRenderQueue(
-      Ogre::v1::OverlayManager::getSingleton().mDefaultRenderQueueId,
-      Ogre::RenderQueue::StableSort);
+  // Overlay system not built — skip addRenderQueueListener for OverlaySystem
+  // this->ogreSceneManager->addRenderQueueListener(
+  //     Ogre2RenderEngine::Instance()->OverlaySystem());
+  // this->ogreSceneManager->getRenderQueue()->setSortRenderQueue(
+  //     Ogre::v1::OverlayManager::getSingleton().mDefaultRenderQueueId,
+  //     Ogre::RenderQueue::StableSort);
 
   // Set sane defaults for proper shadow mapping
   this->ogreSceneManager->setShadowDirectionalLightExtrusionDistance(500.0f);
   this->ogreSceneManager->setShadowFarDistance(500.0f);
 
   // enable forward plus to support multiple lights
-  // this is required for non-shadow-casting point lights and
-  // spot lights to work
-  this->ogreSceneManager->setForwardClustered(true, 16, 8, 24, 96, 1, 500);
+  // ogre-next 2.3: added cubemapProbesPerCel and minDistance params
+  this->ogreSceneManager->setForwardClustered(true, 16, 8, 24, 96, 1, 0, 0.0f, 500.0f);
 }
 
 //////////////////////////////////////////////////
