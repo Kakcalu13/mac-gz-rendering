@@ -63,10 +63,10 @@ Ogre2MaterialSwitcher::~Ogre2MaterialSwitcher()
 }
 
 ////////////////////////////////////////////////
-void Ogre2MaterialSwitcher::preRenderTargetUpdate(
-    const Ogre::RenderTargetEvent &/*_evt*/)
+void Ogre2MaterialSwitcher::workspacePreUpdate(
+    Ogre::CompositorWorkspace * /*_workspace*/)
 {
-  // swap item to use v1 shader material
+  // swap item to use v1 shader material before the workspace renders
   // Note: keep an eye out for performance impact on switching materials
   // on the fly. We are not doing this often so should be ok.
   this->datablockMap.clear();
@@ -104,10 +104,10 @@ void Ogre2MaterialSwitcher::preRenderTargetUpdate(
 }
 
 /////////////////////////////////////////////////
-void Ogre2MaterialSwitcher::postRenderTargetUpdate(
-    const Ogre::RenderTargetEvent &/*_evt*/)
+void Ogre2MaterialSwitcher::workspacePosUpdate(
+    Ogre::CompositorWorkspace * /*_workspace*/)
 {
-  // restore item to use hlms material
+  // restore item to use hlms material after the workspace finishes
   auto itor = this->scene->OgreSceneManager()->getMovableObjectIterator(
       Ogre::ItemFactory::FACTORY_TYPE_NAME);
   while (itor.hasMoreElements())
