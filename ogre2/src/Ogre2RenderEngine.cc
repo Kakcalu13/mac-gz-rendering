@@ -22,6 +22,12 @@
 # include <GL/glx.h>
 #endif
 
+#ifdef __APPLE__
+# include <dispatch/dispatch.h>
+# include <pthread.h>  // for pthread_main_np()
+# include <OpenGL/CGLCurrent.h>  // CGLGetCurrentContext / CGLSetCurrentContext
+#endif
+
 #ifdef _WIN32
   // Ensure that Winsock2.h is included before Windows.h, which can get
   // pulled in by anybody (e.g., Boost).
@@ -35,6 +41,7 @@
 
 #include "gz/rendering/RenderEngineManager.hh"
 #include "gz/rendering/ogre2/Ogre2Includes.hh"
+#include <OgreWindow.h>
 #include "gz/rendering/ogre2/Ogre2RenderEngine.hh"
 #include "gz/rendering/ogre2/Ogre2RenderTypes.hh"
 #include "gz/rendering/ogre2/Ogre2Scene.hh"
@@ -390,7 +397,8 @@ void Ogre2RenderEngine::CreateRoot()
 //////////////////////////////////////////////////
 void Ogre2RenderEngine::CreateOverlay()
 {
-  this->ogreOverlaySystem = new Ogre::v1::OverlaySystem();
+  // Overlay component not built with this ogre-next installation; skip
+  // this->ogreOverlaySystem = new Ogre::v1::OverlaySystem();
 }
 
 //////////////////////////////////////////////////
@@ -412,6 +420,13 @@ void Ogre2RenderEngine::LoadPlugins()
     std::string extension = ".dll";
 #else
     std::string extension = ".so";
+#endif
+#ifdef __APPLE__
+    // On macOS, prefer Metal over GL3Plus. GL3Plus uses NSWindow/NSOpenGLContext
+    // which must be created on the main thread, but rendering runs on a
+    // background thread. Metal does not have this restriction.
+    std::string metalPlugin = common::joinPaths(path, "RenderSystem_Metal");
+    plugins.push_back(metalPlugin);
 #endif
     std::string p = common::joinPaths(path, "RenderSystem_GL3Plus");
     plugins.push_back(p);
@@ -440,8 +455,9 @@ void Ogre2RenderEngine::LoadPlugins()
       // load the plugin
       try
       {
-        // Load the plugin into OGRE
-        this->ogreRoot->loadPlugin(filename);
+        // Load the plugin into OGRE (ogre-next 2.3: loadPlugin requires optional flag and options)
+        this->ogreRoot->loadPlugin(filename, false, nullptr);
+        ignerr << "Loaded Ogre Plugin: " << filename << "\n";
       }
       catch(Ogre::Exception &e)
       {
@@ -451,6 +467,15 @@ void Ogre2RenderEngine::LoadPlugins()
                  << "]. Rendering will not be possible."
                  << "Make sure you have installed OGRE properly.\n";
         }
+      }
+      catch(const std::exception &e)
+      {
+        ignerr << "std::exception loading Ogre Plugin[" << *piter
+               << "]: " << e.what() << "\n";
+      }
+      catch(...)
+      {
+        ignerr << "Unknown exception loading Ogre Plugin[" << *piter << "]\n";
       }
     }
   }
@@ -482,22 +507,47 @@ void Ogre2RenderEngine::CreateRenderSystem()
   // complain about the line being too long
   while (renderSys && renderSys->getName().compare("OpenGL 3+ Rendering Subsystem") != 0); // NOLINT
 
+#ifdef __APPLE__
+  // On Apple Silicon (M2), Apple's OpenGL compatibility layer is incomplete
+  // (e.g. glCopyBufferSubData is not implemented), so GL3Plus crashes during
+  // VAO initialisation. Always prefer Metal on macOS; use GL3Plus only as a
+  // last resort when Metal is unavailable.
+  {
+    Ogre::RenderSystem *metalSys = nullptr;
+    for (int i = 0; i < static_cast<int>(rsList->size()); ++i)
+    {
+      if (rsList->at(i)->getName().compare("Metal Rendering Subsystem") == 0)
+      {
+        metalSys = rsList->at(i);
+        break;
+      }
+    }
+    if (metalSys)
+      renderSys = metalSys;
+    // else keep renderSys (GL3Plus or null) as found above
+  }
+#endif
+
+  ignerr << "CreateRenderSystem: rsList size=" << rsList->size()
+         << ", renderSys=" << (renderSys ? renderSys->getName() : "NULL") << "\n";
+
   if (renderSys == nullptr)
   {
     ignerr << "unable to find OpenGL rendering system. OGRE is probably "
             "installed incorrectly. Double check the OGRE cmake output, "
             "and make sure OpenGL is enabled." << std::endl;
+    return;  // avoid null-pointer dereference below
   }
 
   // We operate in windowed mode
-  renderSys->setConfigOption("Full Screen", "No");
+  try { renderSys->setConfigOption("Full Screen", "No"); }
+  catch(Ogre::Exception &) {}
 
-  /// We used to allow the user to set the RTT mode to PBuffer, FBO, or Copy.
-  ///   Copy is slow, and there doesn't seem to be a good reason to use it
-  ///   PBuffer limits the size of the renderable area of the RTT to the
-  ///           size of the first window created.
-  ///   FBO seem to be the only good option
-  renderSys->setConfigOption("RTT Preferred Mode", "FBO");
+  // GL3Plus RTT mode: Metal does not use FBO and will ignore/reject this option
+  if (renderSys->getName().find("Metal") == std::string::npos)
+  {
+    renderSys->setConfigOption("RTT Preferred Mode", "FBO");
+  }
 
   // get all supported fsaa values
   Ogre::ConfigOptionMap configMap = renderSys->getConfigOptions();
@@ -533,6 +583,7 @@ void Ogre2RenderEngine::CreateRenderSystem()
   renderSys->setConfigOption("FSAA", std::to_string(fsaa));
 
   this->ogreRoot->setRenderSystem(renderSys);
+  ignmsg << "Selected Ogre render system: [" << renderSys->getName() << "]\n";
 }
 
 //////////////////////////////////////////////////
@@ -590,6 +641,16 @@ void Ogre2RenderEngine::CreateResources()
       rootHlmsFolder, "2.0", "scripts", "materials", "Common", "GLSL");
   Ogre::ResourceGroupManager::getSingleton().addResourceLocation(
       commonGLSLMaterialFolder, "FileSystem", "General");
+#ifdef __APPLE__
+  // On macOS with Metal render system, register Metal shader resources
+  Ogre::String commonMetalMaterialFolder = common::joinPaths(
+      rootHlmsFolder, "2.0", "scripts", "materials", "Common", "Metal");
+  if (common::isDirectory(commonMetalMaterialFolder))
+  {
+    Ogre::ResourceGroupManager::getSingleton().addResourceLocation(
+        commonMetalMaterialFolder, "FileSystem", "General");
+  }
+#endif
 
   // The following code is taken from the registerHlms() function in ogre2
   // samples framework
@@ -670,22 +731,34 @@ void Ogre2RenderEngine::CreateResources()
 void Ogre2RenderEngine::CreateRenderWindow()
 {
   // create dummy window
-  auto res = this->CreateRenderWindow(std::to_string(this->dummyWindowId),
-      1, 1, 1, 0);
-  if (res.empty())
+  auto *win = this->CreateOgreWindow(
+      std::to_string(this->dummyWindowId), 1, 1, 1.0, 0);
+  if (!win)
   {
     ignerr << "Failed to create dummy render window." << std::endl;
   }
 }
 
 //////////////////////////////////////////////////
+/// \brief Legacy string-name wrapper kept for ABI compat.
 std::string Ogre2RenderEngine::CreateRenderWindow(const std::string &_handle,
     const unsigned int _width, const unsigned int _height,
     const double _ratio, const unsigned int _antiAliasing)
 {
-  Ogre::StringVector paramsVector;
+  Ogre::Window *win = this->CreateOgreWindow(
+      _handle, _width, _height, _ratio, _antiAliasing);
+  if (!win)
+    return std::string();
+  return win->getTitle();
+}
+
+//////////////////////////////////////////////////
+/// ogre-next 2.3: returns Ogre::Window* directly
+Ogre::Window *Ogre2RenderEngine::CreateOgreWindow(const std::string &_handle,
+    const unsigned int _width, const unsigned int _height,
+    const double _ratio, const unsigned int _antiAliasing)
+{
   Ogre::NameValuePairList params;
-  Ogre::RenderWindow *window = nullptr;
 
   // if use current gl then don't include window handle params
   if (!this->useCurrentGLContext)
@@ -701,16 +774,24 @@ std::string Ogre2RenderEngine::CreateRenderWindow(const std::string &_handle,
   params["FSAA"] = std::to_string(_antiAliasing);
   params["stereoMode"] = "Frame Sequential";
 
-  // TODO(anyone): determine api without qt
-
 #if defined(__APPLE__)
-  // Set the macAPI for Ogre based on the Qt implementation
-  params["macAPI"] = "cocoa";
-  params["macAPICocoaUseNSView"] = "true";
+  // macAPI/cocoa params are only relevant for GL3Plus (Cocoa NSView).
+  // Metal uses MTKView and does not use these parameters.
+  {
+    const Ogre::RenderSystem *rs = this->ogreRoot->getRenderSystem();
+    if (rs && rs->getName().find("Metal") == std::string::npos)
+    {
+      params["macAPI"] = "cocoa";
+      params["macAPICocoaUseNSView"] = "true";
+    }
+  }
 #endif
 
   // Hide window if dimensions are less than or equal to one.
   params["border"] = "none";
+  // On macOS/Metal, hide 1x1 dummy context windows — they have no content.
+  if (_width <= 1 && _height <= 1)
+    params["hidden"] = "true";
 
   std::ostringstream stream;
   stream << "OgreWindow(0)" << "_" << _handle;
@@ -727,11 +808,67 @@ std::string Ogre2RenderEngine::CreateRenderWindow(const std::string &_handle,
     params["currentGLContext"] = "true";
   }
 
+#ifdef __APPLE__
+  __block Ogre::Window *window = nullptr;
+  int attempts = 0;
+  while (window == nullptr && (attempts++) < 10)
+  {
+    __block std::exception_ptr eptr = nullptr;
+    const std::string winName = stream.str();
+    const unsigned int winWidth = _width;
+    const unsigned int winHeight = _height;
+    Ogre::NameValuePairList *winParams = &params;
+    Ogre::Root *root = this->ogreRoot;
+    // When using currentGLContext=true (GL3Plus render texture mode), Ogre
+    // calls CGLGetCurrentContext() to wrap the existing context.  However,
+    // GL3Plus still creates an NSWindow which must happen on the main thread.
+    // Solution: capture the render-thread CGL context before dispatching, then
+    // set it current on the main thread so Ogre wraps the right context.
+    CGLContextObj savedCGL = this->useCurrentGLContext
+        ? CGLGetCurrentContext() : nullptr;
+    void (^createWin)(void) = ^{
+      CGLContextObj prevCGL = nullptr;
+      if (savedCGL)
+      {
+        prevCGL = CGLGetCurrentContext();
+        CGLSetCurrentContext(savedCGL);
+      }
+      try
+      {
+        // ogre-next 2.3: createRenderWindow returns Ogre::Window*
+        window = root->createRenderWindow(
+            winName, winWidth, winHeight, false, winParams);
+      }
+      catch (...)
+      {
+        eptr = std::current_exception();
+      }
+      if (savedCGL)
+        CGLSetCurrentContext(prevCGL);
+    };
+    if (pthread_main_np())
+      createWin();
+    else
+      dispatch_sync(dispatch_get_main_queue(), createWin);
+    if (eptr)
+    {
+      try { std::rethrow_exception(eptr); }
+      catch (const std::exception &_e)
+      {
+        ignerr << " Unable to create the rendering window: " << _e.what()
+               << std::endl;
+        window = nullptr;
+      }
+    }
+  }
+#else
+  Ogre::Window *window = nullptr;
   int attempts = 0;
   while (window == nullptr && (attempts++) < 10)
   {
     try
     {
+      // ogre-next 2.3: createRenderWindow returns Ogre::Window*
       window = this->ogreRoot->createRenderWindow(
           stream.str(), _width, _height, false, &params);
     }
@@ -742,23 +879,22 @@ std::string Ogre2RenderEngine::CreateRenderWindow(const std::string &_handle,
       window = nullptr;
     }
   }
+#endif
 
   if (attempts >= 10)
   {
     ignerr << "Unable to create the rendering window after [" << attempts
            << "] attempts." << std::endl;
-    return std::string();
+    return nullptr;
   }
 
   if (window)
   {
-    window->setActive(true);
-    window->setVisible(true);
-
-    // Windows needs to reposition the render window to 0,0.
+    // ogre-next 2.3: _setVisible instead of setVisible
+    window->_setVisible(true);
     window->reposition(0, 0);
   }
-  return stream.str();
+  return window;
 }
 
 //////////////////////////////////////////////////
