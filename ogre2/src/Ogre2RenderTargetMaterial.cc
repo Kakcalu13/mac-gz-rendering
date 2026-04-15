@@ -22,32 +22,53 @@ using namespace gz::rendering;
 
 //////////////////////////////////////////////////
 Ogre2RenderTargetMaterial::Ogre2RenderTargetMaterial(
-    Ogre::SceneManager *_scene, Ogre::RenderTarget *_renderTarget,
+    Ogre::SceneManager *_scene, Ogre::CompositorWorkspace *_workspace,
     Ogre::Material *_material):
-  scene(_scene), renderTarget(_renderTarget), material(_material)
+  scene(_scene), workspace(_workspace), material(_material)
 {
   // Pick a name that's unlikely to collide with a real material scheme
   this->schemeName = "__ignition__rendering__Ogre2RenderTargetMaterial";
-  this->renderTarget->getViewport(0)->setMaterialScheme(this->schemeName);
-  this->renderTarget->addListener(this);
+
+  // Set the material scheme on every scene pass in this workspace so that
+  // handleSchemeNotFound is invoked for every renderable.
+  if (this->workspace)
+  {
+    auto nodeSeq = this->workspace->getNodeSequence();
+    for (auto *node : nodeSeq)
+    {
+      for (auto *pass : node->_getPasses())
+      {
+        auto *passDef = const_cast<Ogre::CompositorPassDef *>(
+            pass->getDefinition());
+        if (passDef->getType() == Ogre::PASS_SCENE)
+        {
+          auto *sceneDef =
+              static_cast<Ogre::CompositorPassSceneDef *>(passDef);
+          sceneDef->mMaterialScheme = this->schemeName;
+        }
+      }
+    }
+    this->workspace->addListener(this);
+  }
 }
 
 //////////////////////////////////////////////////
 Ogre2RenderTargetMaterial::~Ogre2RenderTargetMaterial()
 {
-  this->renderTarget->removeListener(this);
+  if (this->workspace)
+    this->workspace->removeListener(this);
 }
 
 //////////////////////////////////////////////////
-void Ogre2RenderTargetMaterial::preRenderTargetUpdate(
-    const Ogre::RenderTargetEvent & /*_evt*/)
+void Ogre2RenderTargetMaterial::workspacePreUpdate(
+    Ogre::CompositorWorkspace * /*_workspace*/)
 {
   Ogre::MaterialManager::getSingleton().addListener(this);
 }
 
 //////////////////////////////////////////////////
-void Ogre2RenderTargetMaterial::postRenderTargetUpdate(
-    const Ogre::RenderTargetEvent & /*_evt*/)
+void Ogre2RenderTargetMaterial::workspacePosUpdate(
+    Ogre::CompositorWorkspace * /*_workspace*/)
 {
   Ogre::MaterialManager::getSingleton().removeListener(this);
 }
