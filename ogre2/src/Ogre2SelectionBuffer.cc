@@ -282,7 +282,8 @@ Ogre::Item *Ogre2SelectionBuffer::OnSelectionClick(const int _x, const int _y)
   // DEBUG: skip pixel-zoom projection to check if selection camera sees any geometry
   // this->dataPtr->selectionCamera->setCustomProjectionMatrix(true,
   //     scaleMatrix * transMatrix * this->dataPtr->camera->getProjectionMatrix());
-  this->dataPtr->selectionCamera->setCustomProjectionMatrix(false);
+  this->dataPtr->selectionCamera->setCustomProjectionMatrix(true,
+    scaleMatrix * transMatrix * this->dataPtr->camera->getProjectionMatrix());
   this->dataPtr->selectionCamera->setPosition(
       this->dataPtr->camera->getDerivedPosition());
   this->dataPtr->selectionCamera->setOrientation(
@@ -296,30 +297,45 @@ Ogre::Item *Ogre2SelectionBuffer::OnSelectionClick(const int _x, const int _y)
          << this->dataPtr->camera->getDerivedDirection().y << ","
          << this->dataPtr->camera->getDerivedDirection().z << ")"
          << std::endl;
+  // Copy full camera state
+  this->dataPtr->selectionCamera->setNearClipDistance(
+      this->dataPtr->camera->getNearClipDistance());
+  this->dataPtr->selectionCamera->setFarClipDistance(
+      this->dataPtr->camera->getFarClipDistance());
+  this->dataPtr->selectionCamera->setFOVy(
+      this->dataPtr->camera->getFOVy());
 
   // update render texture
   this->Update();
 
-  size_t posInStream = 0;
-  math::Color::BGRA color(0);
-  if (!this->dataPtr->buffer)
-  {
-    ignerr << "Selection buffer is null." << std::endl;
-    return nullptr;
-  }
-  memcpy(static_cast<void *>(&color), this->dataPtr->buffer + posInStream, 4);
-  ignerr << "SelectionBuffer: raw buffer bytes: "
-         << (int)this->dataPtr->buffer[0] << " "
-         << (int)this->dataPtr->buffer[1] << " "
-         << (int)this->dataPtr->buffer[2] << " "
-         << (int)this->dataPtr->buffer[3] << std::endl;
-  math::Color cv;
-  cv.SetFromARGB(color);
-  cv.A(1.0);
-  ignerr << "SelectionBuffer: decoded color r=" << cv.R()
-         << " g=" << cv.G() << " b=" << cv.B() << std::endl;
-  const std::string &entName =
-    this->dataPtr->materialSwitcher->EntityName(cv);
+   if (!this->dataPtr->buffer)
+    {
+      ignerr << "Selection buffer is null." << std::endl;
+      return nullptr;
+    }
+
+    const uint8_t r = this->dataPtr->buffer[0];
+    const uint8_t g = this->dataPtr->buffer[1];
+    const uint8_t b = this->dataPtr->buffer[2];
+    const uint8_t a = this->dataPtr->buffer[3];
+
+    ignerr << "SelectionBuffer: raw buffer bytes: "
+           << (int)r << " "
+           << (int)g << " "
+           << (int)b << " "
+           << (int)a << std::endl;
+
+    math::Color cv(
+        static_cast<float>(r) / 255.0f,
+        static_cast<float>(g) / 255.0f,
+        static_cast<float>(b) / 255.0f,
+        1.0f);
+
+    ignerr << "SelectionBuffer: decoded color r=" << cv.R()
+           << " g=" << cv.G() << " b=" << cv.B() << std::endl;
+
+    const std::string &entName =
+      this->dataPtr->materialSwitcher->EntityName(cv);
   ignerr << "SelectionBuffer: entity name: '" << entName << "'" << std::endl;
 
   if (entName.empty())
