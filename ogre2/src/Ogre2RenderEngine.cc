@@ -681,10 +681,13 @@ void Ogre2RenderEngine::CreateResources()
     libraryFolderPathEn = libraryFoldersPaths.end();
     while (libraryFolderPathIt != libraryFolderPathEn)
     {
-      Ogre::Archive *archiveLibrary =
-          archiveManager.load(rootHlmsFolder + *libraryFolderPathIt,
-          "FileSystem", true);
-      archiveUnlitLibraryFolders.push_back(archiveLibrary);
+      const std::string libPath = rootHlmsFolder + *libraryFolderPathIt;
+      if (common::isDirectory(libPath))
+      {
+        Ogre::Archive *archiveLibrary =
+            archiveManager.load(libPath, "FileSystem", true);
+        archiveUnlitLibraryFolders.push_back(archiveLibrary);
+      }
       ++libraryFolderPathIt;
     }
 
@@ -693,8 +696,8 @@ void Ogre2RenderEngine::CreateResources()
         &archiveUnlitLibraryFolders);
     Ogre::Root::getSingleton().getHlmsManager()->registerHlms(hlmsUnlit);
 
-    // disable writting debug output to disk
-    hlmsUnlit->setDebugOutputPath(false, false);
+    // enable debug output to see generated Metal shader on compile error
+    hlmsUnlit->setDebugOutputPath(true, true, "/tmp/hlms_unlit_");
   }
 
   {
@@ -705,16 +708,21 @@ void Ogre2RenderEngine::CreateResources()
     Ogre::Archive *archivePbs = archiveManager.load(
         rootHlmsFolder + mainFolderPath, "FileSystem", true);
 
-    // Get the library archive(s)
+    // Get the library archive(s), skipping any that don't exist in this
+    // installation (e.g. Any/Main was introduced in ogre-next 2.3 but
+    // gz-rendering provides its own platform-specific equivalents).
     Ogre::ArchiveVec archivePbsLibraryFolders;
     libraryFolderPathIt = libraryFoldersPaths.begin();
     libraryFolderPathEn = libraryFoldersPaths.end();
     while (libraryFolderPathIt != libraryFolderPathEn)
     {
-      Ogre::Archive *archiveLibrary =
-          archiveManager.load(rootHlmsFolder + *libraryFolderPathIt,
-          "FileSystem", true);
-      archivePbsLibraryFolders.push_back(archiveLibrary);
+      const std::string libPath = rootHlmsFolder + *libraryFolderPathIt;
+      if (common::isDirectory(libPath))
+      {
+        Ogre::Archive *archiveLibrary =
+            archiveManager.load(libPath, "FileSystem", true);
+        archivePbsLibraryFolders.push_back(archiveLibrary);
+      }
       ++libraryFolderPathIt;
     }
 
