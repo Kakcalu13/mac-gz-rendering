@@ -183,12 +183,14 @@ unsigned int Ogre2Camera::RenderTextureGLId() const
 //////////////////////////////////////////////////
 void Ogre2Camera::SetSelectionBuffer()
 {
-  this->selectionBuffer = new Ogre2SelectionBuffer(this->name, this->scene);
+  this->selectionBuffer = new Ogre2SelectionBuffer(
+      this->name, this->scene, this->ImageWidth(), this->ImageHeight());
 }
 
 //////////////////////////////////////////////////
 VisualPtr Ogre2Camera::VisualAt(const math::Vector2i &_mousePos)
 {
+  ignerr << "Camera::VisualAt called mousePos=" << _mousePos.X() << "," << _mousePos.Y() << std::endl;
   VisualPtr result;
 
   if (!this->selectionBuffer)
@@ -197,17 +199,24 @@ VisualPtr Ogre2Camera::VisualAt(const math::Vector2i &_mousePos)
 
     if (!this->selectionBuffer)
     {
+      ignerr << "Camera::VisualAt: selectionBuffer creation failed" << std::endl;
       return result;
     }
   }
+
+  // Keep selection buffer viewport dims in sync with the camera.
+  this->selectionBuffer->SetDimensions(
+      this->ImageWidth(), this->ImageHeight());
 
   float ratio = screenScalingFactor();
   math::Vector2i mousePos(
       static_cast<int>(std::rint(ratio * _mousePos.X())),
       static_cast<int>(std::rint(ratio * _mousePos.Y())));
 
+  ignerr << "Camera::VisualAt: calling OnSelectionClick mousePos=" << mousePos.X() << "," << mousePos.Y() << " viewport=" << this->ImageWidth() << "x" << this->ImageHeight() << std::endl;
   Ogre::Item *ogreItem = this->selectionBuffer->OnSelectionClick(
       mousePos.X(), mousePos.Y());
+  ignerr << "Camera::VisualAt: OnSelectionClick returned " << (ogreItem ? "item" : "null") << std::endl;
 
   if (ogreItem)
   {
