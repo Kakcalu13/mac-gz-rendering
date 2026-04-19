@@ -109,45 +109,6 @@ void Ogre2RenderTarget::Copy(Image &_image) const
   Ogre::TextureGpuManager *texMgr =
       Ogre2RenderEngine::Instance()->OgreRoot()->getRenderSystem()->getTextureGpuManager();
 
-  // Try downloading from rt0 (intermediate rendered texture) instead of
-  // rt_output to isolate whether the compositor chain is writing correctly.
-  // rt0 is the output of PbsMaterialsRenderingNode (the scene render).
-  // If rt0 is non-black but rt_output is black, the problem is in FinalComposition.
-  static int copyCount = 0;
-  ++copyCount;
-  if (copyCount <= 3 && this->ogreCompositorWorkspace)
-  {
-    auto nodeSeq = this->ogreCompositorWorkspace->getNodeSequence();
-    if (!nodeSeq.empty())
-    {
-      // nodeSeq[0] = PbsMaterialsRenderingNode, which outputs rt0
-      auto *node = nodeSeq[0];
-      const auto &localTexes = node->getLocalTextures();
-      ignerr << "Copy#" << copyCount << " numLocalTextures=" << localTexes.size() << "\n";
-      for (size_t i = 0; i < localTexes.size() && i < 2; ++i)
-      {
-        auto *localTex = localTexes[i];  // CompositorChannel = TextureGpu*
-        if (localTex && localTex->getResidencyStatus() == Ogre::GpuResidency::Resident)
-        {
-          Ogre::AsyncTextureTicket *rt0Ticket =
-              texMgr->createAsyncTextureTicket(
-                  localTex->getWidth(), localTex->getHeight(), 1,
-                  Ogre::TextureTypes::Type2D, localTex->getPixelFormat());
-          rt0Ticket->download(localTex, 0, true);
-          Ogre::TextureBox rt0Box = rt0Ticket->map(0);
-          const uint8_t *rp = static_cast<const uint8_t*>(rt0Box.data);
-          if (rp)
-            ignerr << "Copy#" << copyCount << " rt[" << i << "] "
-                   << localTex->getWidth() << "x" << localTex->getHeight()
-                   << " p[0]=" << (int)rp[0] << "," << (int)rp[1] << ","
-                   << (int)rp[2] << "," << (int)rp[3] << "\n";
-          rt0Ticket->unmap();
-          texMgr->destroyAsyncTextureTicket(rt0Ticket);
-        }
-      }
-    }
-  }
-
   Ogre::PixelFormatGpu ogrePfGpu = tex->getPixelFormat();
 
   Ogre::AsyncTextureTicket *ticket =
@@ -156,16 +117,6 @@ void Ogre2RenderTarget::Copy(Image &_image) const
   ticket->download(tex, 0, true);
 
   Ogre::TextureBox box = ticket->map(0);
-
-  if (copyCount <= 3)
-  {
-    const uint8_t *p = static_cast<const uint8_t *>(box.data);
-    if (p)
-      ignerr << "Copy#" << copyCount << " box.data ok bytesPerRow=" << box.bytesPerRow
-             << " p[0]=" << (int)p[0] << "," << (int)p[1] << "," << (int)p[2] << "," << (int)p[3] << "\n";
-    else
-      ignerr << "Copy#" << copyCount << " box.data is NULL!\n";
-  }
   // Copy to image data buffer (row by row to handle pitch differences).
   // NOTE: gz-rendering's PF_R8G8B8 maps to Ogre's PFG_RGBA8_UNORM (4 bytes/pixel)
   // because Ogre2 has no native 24-bit RGB format. The Image buffer was allocated
@@ -202,6 +153,38 @@ void Ogre2RenderTarget::Copy(Image &_image) const
                src + row * srcBytesPerRow + col * srcBpp,
                copyBpp);
       }
+    }
+  }
+
+  // Diagnostic: log pixel samples periodically to catch post-scene-load frames.
+  {
+    static int diagCount = 0;
+    ++diagCount;
+    // Log frame 1..5, then every 30th frame up to 600 (about 20 seconds at 30fps)
+    bool doLog = (diagCount <= 5) || (diagCount <= 600 && diagCount % 30 == 0);
+    if (doLog)
+    {
+      // Only log if we see non-uniform pixels (scene loaded) or first few frames.
+      // Sample a grid of 9 points to catch objects wherever they are.
+      std::cerr << "[DIAG] frame=" << diagCount
+                << " gpuFmt=" << (int)ogrePfGpu
+                << " " << this->width << "x" << this->height << "\n";
+      auto samplePixel = [&](uint32_t col, uint32_t row, const char *label)
+      {
+        if (col >= this->width || row >= this->height) return;
+        const uint8_t *p = src + row * srcBytesPerRow + col * srcBpp;
+        std::cerr << "  [DIAG] px[" << label << "]:";
+        for (size_t b = 0; b < srcBpp && b < 4; ++b)
+          std::cerr << " " << (int)p[b];
+        std::cerr << "\n";
+      };
+      uint32_t w4 = this->width/4, w2 = this->width/2, w3 = 3*this->width/4;
+      uint32_t h4 = this->height/4, h2 = this->height/2, h3 = 3*this->height/4;
+      samplePixel(w2, h2, "C");    // center
+      samplePixel(w4, h4, "TL");   // top-left quadrant
+      samplePixel(w3, h4, "TR");   // top-right quadrant
+      samplePixel(w4, h3, "BL");   // bottom-left quadrant
+      samplePixel(w3, h3, "BR");   // bottom-right quadrant
     }
   }
 
