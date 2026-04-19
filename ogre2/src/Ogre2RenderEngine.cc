@@ -442,12 +442,9 @@ void Ogre2RenderEngine::LoadPlugins()
         filename = filename + "." + std::string(OGRE2_VERSION);
         if (!common::exists(filename))
         {
-          if ((*piter).find("RenderSystem") != std::string::npos)
-          {
-            ignerr << "Unable to find Ogre Plugin[" << *piter
-                   << "]. Rendering will not be possible."
-                   << "Make sure you have installed OGRE properly.\n";
-          }
+          // Plugin not found in this search path — may be found in another
+          // path iteration (e.g. in the OGRE/ subdirectory).
+          igndbg << "Ogre Plugin not found in this path: " << *piter << "\n";
           continue;
         }
       }
@@ -455,9 +452,8 @@ void Ogre2RenderEngine::LoadPlugins()
       // load the plugin
       try
       {
-        // Load the plugin into OGRE (ogre-next 2.3: loadPlugin requires optional flag and options)
         this->ogreRoot->loadPlugin(filename, false, nullptr);
-        ignerr << "Loaded Ogre Plugin: " << filename << "\n";
+        ignmsg << "Loaded Ogre Plugin: " << filename << "\n";
       }
       catch(Ogre::Exception &e)
       {
@@ -527,9 +523,6 @@ void Ogre2RenderEngine::CreateRenderSystem()
     // else keep renderSys (GL3Plus or null) as found above
   }
 #endif
-
-  ignerr << "CreateRenderSystem: rsList size=" << rsList->size()
-         << ", renderSys=" << (renderSys ? renderSys->getName() : "NULL") << "\n";
 
   if (renderSys == nullptr)
   {
