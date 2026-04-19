@@ -130,8 +130,6 @@ void Ogre2MaterialSwitcher::workspacePreUpdate(
     }
     itor.moveNext();
   }
-  ignerr << "MaterialSwitcher: workspacePreUpdate workspace=" << _workspace
-         << " assigned colors to " << this->datablockMap.size() << " sub-items" << std::endl;
 }
 
 /////////////////////////////////////////////////
