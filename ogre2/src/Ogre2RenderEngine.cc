@@ -755,8 +755,7 @@ void Ogre2RenderEngine::CreateResources()
     hlmsPbs = OGRE_NEW Ogre::HlmsPbs(archivePbs, &archivePbsLibraryFolders);
     Ogre::Root::getSingleton().getHlmsManager()->registerHlms(hlmsPbs);
 
-    // write generated Metal shaders to /tmp/hlms_pbs_ for debugging
-    hlmsPbs->setDebugOutputPath(true, true, "/tmp/hlms_pbs_");
+    hlmsPbs->setDebugOutputPath(false, false);
   }
 }
 
