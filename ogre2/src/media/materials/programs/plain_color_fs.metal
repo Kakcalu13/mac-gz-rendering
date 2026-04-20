@@ -26,6 +26,5 @@ fragment float4 main_metal(
     PS_INPUT input [[stage_in]],
     constant float4 &inColor [[buffer(PARAMETER_SLOT)]])
 {
-    // DEBUG: return hardcoded white to verify shader executes
-    return float4(1.0, 1.0, 1.0, 1.0);
+    return inColor;
 }
