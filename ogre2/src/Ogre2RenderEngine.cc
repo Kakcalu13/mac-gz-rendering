@@ -442,12 +442,9 @@ void Ogre2RenderEngine::LoadPlugins()
         filename = filename + "." + std::string(OGRE2_VERSION);
         if (!common::exists(filename))
         {
-          if ((*piter).find("RenderSystem") != std::string::npos)
-          {
-            ignerr << "Unable to find Ogre Plugin[" << *piter
-                   << "]. Rendering will not be possible."
-                   << "Make sure you have installed OGRE properly.\n";
-          }
+          // Plugin not found in this search path — may be found in another
+          // path iteration (e.g. in the OGRE/ subdirectory).
+          igndbg << "Ogre Plugin not found in this path: " << *piter << "\n";
           continue;
         }
       }
@@ -455,9 +452,8 @@ void Ogre2RenderEngine::LoadPlugins()
       // load the plugin
       try
       {
-        // Load the plugin into OGRE (ogre-next 2.3: loadPlugin requires optional flag and options)
         this->ogreRoot->loadPlugin(filename, false, nullptr);
-        ignerr << "Loaded Ogre Plugin: " << filename << "\n";
+        ignmsg << "Loaded Ogre Plugin: " << filename << "\n";
       }
       catch(Ogre::Exception &e)
       {
@@ -527,9 +523,6 @@ void Ogre2RenderEngine::CreateRenderSystem()
     // else keep renderSys (GL3Plus or null) as found above
   }
 #endif
-
-  ignerr << "CreateRenderSystem: rsList size=" << rsList->size()
-         << ", renderSys=" << (renderSys ? renderSys->getName() : "NULL") << "\n";
 
   if (renderSys == nullptr)
   {
@@ -608,16 +601,19 @@ void Ogre2RenderEngine::CreateResources()
     archNames.push_back(
         std::make_pair(p, "General"));
     archNames.push_back(
-        std::make_pair(p + "/materials/programs", "General"));
+        std::make_pair(common::joinPaths(p, "materials", "programs"), "General"));
     archNames.push_back(
-        std::make_pair(p + "/materials/scripts", "General"));
+        std::make_pair(common::joinPaths(p, "materials", "scripts"), "General"));
 
     for (auto aiter = archNames.begin(); aiter != archNames.end(); ++aiter)
     {
       try
       {
-        Ogre::ResourceGroupManager::getSingleton().addResourceLocation(
-            aiter->first, "FileSystem", aiter->second);
+        if (common::isDirectory(aiter->first))
+        {
+          Ogre::ResourceGroupManager::getSingleton().addResourceLocation(
+              aiter->first, "FileSystem", aiter->second);
+        }
       }
       catch(Ogre::Exception &/*_e*/)
       {
@@ -629,18 +625,32 @@ void Ogre2RenderEngine::CreateResources()
 
   // register PbsMaterial resources
   Ogre::String rootHlmsFolder = mediaPath;
+
+  // 2.0 compositor + material scripts
   Ogre::String pbsCompositorFolder = common::joinPaths(
       rootHlmsFolder, "2.0", "scripts", "Compositors");
-  Ogre::ResourceGroupManager::getSingleton().addResourceLocation(
-      pbsCompositorFolder, "FileSystem", "General");
+  if (common::isDirectory(pbsCompositorFolder))
+  {
+    Ogre::ResourceGroupManager::getSingleton().addResourceLocation(
+        pbsCompositorFolder, "FileSystem", "General");
+  }
+
   Ogre::String commonMaterialFolder = common::joinPaths(
       rootHlmsFolder, "2.0", "scripts", "materials", "Common");
-  Ogre::ResourceGroupManager::getSingleton().addResourceLocation(
-      commonMaterialFolder, "FileSystem", "General");
+  if (common::isDirectory(commonMaterialFolder))
+  {
+    Ogre::ResourceGroupManager::getSingleton().addResourceLocation(
+        commonMaterialFolder, "FileSystem", "General");
+  }
+
   Ogre::String commonGLSLMaterialFolder = common::joinPaths(
       rootHlmsFolder, "2.0", "scripts", "materials", "Common", "GLSL");
-  Ogre::ResourceGroupManager::getSingleton().addResourceLocation(
-      commonGLSLMaterialFolder, "FileSystem", "General");
+  if (common::isDirectory(commonGLSLMaterialFolder))
+  {
+    Ogre::ResourceGroupManager::getSingleton().addResourceLocation(
+        commonGLSLMaterialFolder, "FileSystem", "General");
+  }
+
 #ifdef __APPLE__
   // On macOS with Metal render system, register Metal shader resources
   Ogre::String commonMetalMaterialFolder = common::joinPaths(
@@ -726,16 +736,31 @@ void Ogre2RenderEngine::CreateResources()
       ++libraryFolderPathIt;
     }
 
+#ifdef __APPLE__
+    // Also feed the Common/Metal materials directory as a PBS HLMS library
+    // so Metal shaders under 2.0/scripts/materials/Common/Metal are visible.
+    {
+      const std::string metalLib = common::joinPaths(
+          mediaPath, "2.0", "scripts", "materials", "Common", "Metal");
+      if (common::isDirectory(metalLib))
+      {
+        Ogre::Archive *archiveLibrary =
+            archiveManager.load(metalLib, "FileSystem", true);
+        archivePbsLibraryFolders.push_back(archiveLibrary);
+      }
+    }
+#endif
+
     // Create and register
     hlmsPbs = OGRE_NEW Ogre::HlmsPbs(archivePbs, &archivePbsLibraryFolders);
     Ogre::Root::getSingleton().getHlmsManager()->registerHlms(hlmsPbs);
 
-    // disable writting debug output to disk
     hlmsPbs->setDebugOutputPath(false, false);
   }
 }
 
 //////////////////////////////////////////////////
+
 void Ogre2RenderEngine::CreateRenderWindow()
 {
   // create dummy window
@@ -808,7 +833,7 @@ Ogre::Window *Ogre2RenderEngine::CreateOgreWindow(const std::string &_handle,
   params["contentScalingFactor"] = std::to_string(_ratio);
 
   // Ogre 2 PBS expects gamma correction
-  params["gamma"] = "true";
+  params["gamma"] = "false";
 
   if (this->useCurrentGLContext)
   {

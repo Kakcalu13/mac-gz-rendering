@@ -117,9 +117,12 @@ void Ogre2MaterialSwitcher::workspacePreUpdate(
       Ogre::HlmsDatablock *origDatablock = subItem->getDatablock();
       this->datablockMap[subItem] = origDatablock;
 
-      // Overlay items (depth check/write both off) stay in overlay render queue
-      bool isOverlay = (!origDatablock->getMacroblock()->mDepthWrite &&
-                        !origDatablock->getMacroblock()->mDepthCheck);
+      bool isOverlay = false;
+      if (origDatablock && origDatablock->getMacroblock())
+        {
+          isOverlay = (!origDatablock->getMacroblock()->mDepthWrite &&
+                       !origDatablock->getMacroblock()->mDepthCheck);
+        }
 
       Ogre::HlmsUnlitDatablock *selDb =
           GetOrCreateDatablock(this->currentColor, isOverlay);
@@ -127,8 +130,6 @@ void Ogre2MaterialSwitcher::workspacePreUpdate(
     }
     itor.moveNext();
   }
-  ignerr << "MaterialSwitcher: workspacePreUpdate workspace=" << _workspace
-         << " assigned colors to " << this->datablockMap.size() << " sub-items" << std::endl;
 }
 
 /////////////////////////////////////////////////

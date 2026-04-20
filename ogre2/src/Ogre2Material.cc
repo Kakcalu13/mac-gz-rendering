@@ -468,9 +468,7 @@ void Ogre2Material::Init()
       this->ogreDatablockId, this->name,
       Ogre::HlmsMacroblock(), Ogre::HlmsBlendblock(), Ogre::HlmsParamVec()));
 
-  // use metal workflow as default
   this->ogreDatablock->setWorkflow(Ogre::HlmsPbsDatablock::MetallicWorkflow);
-
   this->Reset();
 }
 

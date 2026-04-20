@@ -190,7 +190,6 @@ void Ogre2Camera::SetSelectionBuffer()
 //////////////////////////////////////////////////
 VisualPtr Ogre2Camera::VisualAt(const math::Vector2i &_mousePos)
 {
-  ignerr << "Camera::VisualAt called mousePos=" << _mousePos.X() << "," << _mousePos.Y() << std::endl;
   VisualPtr result;
 
   if (!this->selectionBuffer)
@@ -198,10 +197,7 @@ VisualPtr Ogre2Camera::VisualAt(const math::Vector2i &_mousePos)
     this->SetSelectionBuffer();
 
     if (!this->selectionBuffer)
-    {
-      ignerr << "Camera::VisualAt: selectionBuffer creation failed" << std::endl;
       return result;
-    }
   }
 
   // Keep selection buffer viewport dims in sync with the camera.
@@ -213,10 +209,8 @@ VisualPtr Ogre2Camera::VisualAt(const math::Vector2i &_mousePos)
       static_cast<int>(std::rint(ratio * _mousePos.X())),
       static_cast<int>(std::rint(ratio * _mousePos.Y())));
 
-  ignerr << "Camera::VisualAt: calling OnSelectionClick mousePos=" << mousePos.X() << "," << mousePos.Y() << " viewport=" << this->ImageWidth() << "x" << this->ImageHeight() << std::endl;
   Ogre::Item *ogreItem = this->selectionBuffer->OnSelectionClick(
       mousePos.X(), mousePos.Y());
-  ignerr << "Camera::VisualAt: OnSelectionClick returned " << (ogreItem ? "item" : "null") << std::endl;
 
   if (ogreItem)
   {
