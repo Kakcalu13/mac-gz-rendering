@@ -116,6 +116,7 @@ void Ogre2RenderTarget::Copy(Image &_image) const
           Ogre::TextureTypes::Type2D, ogrePfGpu);
   ticket->download(tex, 0, true);
 
+
   Ogre::TextureBox box = ticket->map(0);
   // Copy to image data buffer (row by row to handle pitch differences).
   // NOTE: gz-rendering's PF_R8G8B8 maps to Ogre's PFG_RGBA8_UNORM (4 bytes/pixel)
@@ -134,24 +135,29 @@ void Ogre2RenderTarget::Copy(Image &_image) const
   uint8_t *dst = static_cast<uint8_t *>(_image.Data());
   const uint8_t *src = static_cast<const uint8_t *>(box.data);
 
-  if (srcBpp == dstBpp)
-  {
-    // Fast path: same number of bytes per pixel, just handle row pitch.
+  // PFG_BGRA8_UNORM (used on Metal RTTs) stores bytes as [B, G, R, A].
+  // gz-rendering Image expects RGB byte order, so swap B↔R after copying.
+  const bool needBGRASwizzle = (ogrePfGpu == Ogre::PFG_BGRA8_UNORM ||
+                                ogrePfGpu == Ogre::PFG_BGRA8_UNORM_SRGB);
+
+  if (srcBpp == dstBpp && !needBGRASwizzle) {
+    // Fast path: same bpp, no swizzle needed.
     for (uint32_t row = 0; row < this->height; ++row)
       memcpy(dst + row * dstBytesPerRow, src + row * srcBytesPerRow, dstBytesPerRow);
   }
   else
   {
-    // Slow path: different bpp (e.g. GPU returns RGBA8 but image wants RGB8).
-    // Copy only min(srcBpp, dstBpp) bytes per pixel.
+    // Per-pixel copy: different bpp or BGRA swizzle required.
     const size_t copyBpp = std::min(srcBpp, dstBpp);
     for (uint32_t row = 0; row < this->height; ++row)
     {
       for (uint32_t col = 0; col < this->width; ++col)
       {
-        memcpy(dst + row * dstBytesPerRow + col * dstBpp,
-               src + row * srcBytesPerRow + col * srcBpp,
-               copyBpp);
+        const uint8_t *srcPx = src + row * srcBytesPerRow + col * srcBpp;
+        uint8_t *dstPx = dst + row * dstBytesPerRow + col * dstBpp;
+        memcpy(dstPx, srcPx, copyBpp);
+        if (needBGRASwizzle && copyBpp >= 3)
+          std::swap(dstPx[0], dstPx[2]);  // B↔R
       }
     }
   }
@@ -171,12 +177,12 @@ void Ogre2RenderTarget::Copy(Image &_image) const
                 << " " << this->width << "x" << this->height << "\n";
       auto samplePixel = [&](uint32_t col, uint32_t row, const char *label)
       {
-        if (col >= this->width || row >= this->height) return;
-        const uint8_t *p = src + row * srcBytesPerRow + col * srcBpp;
-        std::cerr << "  [DIAG] px[" << label << "]:";
-        for (size_t b = 0; b < srcBpp && b < 4; ++b)
-          std::cerr << " " << (int)p[b];
-        std::cerr << "\n";
+          if (col >= this->width || row >= this->height) return;
+          const uint8_t *p = src + row * srcBytesPerRow + col * srcBpp;
+          std::cerr << "  [DIAG] px[" << label << "]:";
+          for (size_t b = 0; b < std::min(srcBpp, size_t(4)); ++b)
+            std::cerr << " " << (int)p[b];
+          std::cerr << "\n";
       };
       uint32_t w4 = this->width/4, w2 = this->width/2, w3 = 3*this->width/4;
       uint32_t h4 = this->height/4, h2 = this->height/2, h3 = 3*this->height/4;
@@ -235,6 +241,13 @@ void Ogre2RenderTarget::SetAntiAliasing(unsigned int _aa)
 void Ogre2RenderTarget::PreRender()
 {
   BaseRenderTarget::PreRender();
+
+  // When shadow-casting lights are added/removed after the compositor was
+  // initially built, the shadow node definition becomes stale. Rebuild the
+  // compositor so UpdateShadowNode() runs with the current light count.
+  if (this->ogreCompositorWorkspace && this->scene->ShadowsDirty())
+    this->RebuildCompositor();
+
   this->UpdateBackgroundColor();
 
   if (this->material)
@@ -933,8 +946,18 @@ void Ogre2RenderTexture::BuildTarget()
   Ogre::TextureGpuManager *texMgr =
       Ogre2RenderEngine::Instance()->OgreRoot()->getRenderSystem()->getTextureGpuManager();
 
-  Ogre::PixelFormatGpu ogreFormat =
-      Ogre2Conversions::Convert(this->format);
+  Ogre::PixelFormatGpu ogreFormat = Ogre2Conversions::Convert(this->format);
+
+  // On Metal, use BGRA8 to match the Metal window surface format.
+  // Metal compiles separate PSOs per render target format. Using BGRA8 reuses
+  // the same PSOs already compiled for the Metal window, avoiding blank RTT
+  // output when PBS shaders haven't been compiled for RGBA8 targets.
+  // Copy() swaps B↔R channels when reading back BGRA8 data.
+  {
+    auto *rs = Ogre2RenderEngine::Instance()->OgreRoot()->getRenderSystem();
+    if (rs && rs->getName().find("Metal") != std::string::npos)
+      ogreFormat = Ogre::PFG_BGRA8_UNORM;
+  }
 
   // check if target fsaa is supported
   uint32_t fsaa = 0;
