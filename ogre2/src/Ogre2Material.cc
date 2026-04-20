@@ -84,8 +84,6 @@ math::Color Ogre2Material::Diffuse() const
 void Ogre2Material::SetDiffuse(const math::Color &_color)
 {
   BaseMaterial::SetDiffuse(_color);
-  fprintf(stderr, "[Ogre2Material::SetDiffuse] name=%s R=%.3f G=%.3f B=%.3f\n",
-      this->name.c_str(), _color.R(), _color.G(), _color.B());
   this->ogreDatablock->setDiffuse(
       Ogre::Vector3(_color.R(), _color.G(), _color.B()));
   this->UpdateTransparency();
