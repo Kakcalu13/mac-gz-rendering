@@ -469,6 +469,10 @@ float4 diffuseCol;
 	@end @property( hw_gamma_write )
 		outPs.colour0.xyz	= finalColour;
 	@end
+	// DEBUG: output raw kD*bgDiffuse (diffuseCol) to diagnose color issue
+	// Uncomment ONE line below to test, then comment out before shipping:
+	outPs.colour0.xyz = diffuseCol.xyz;        // DEBUG: raw kD; red→(0.318,0,0), green→(0,0.318,0), blue→(0,0,0.318)
+	// outPs.colour0.xyz = float3(1.0, 0.5, 0.0); // DEBUG: hardcoded orange: confirms shader runs
 
 	@property( hlms_alphablend )
 		@property( use_texture_alpha )
