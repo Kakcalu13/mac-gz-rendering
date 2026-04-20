@@ -9,6 +9,14 @@ struct float1
 	float1( float _x ) : x( _x ) {}
 };
 
+inline float3x3 toMat3x3( float4x4 m )
+{
+    return float3x3( m[0].xyz, m[1].xyz, m[2].xyz );
+}
+inline float3x3 toMat3x3( float3x4 m )
+{
+	return float3x3( m[0].xyz, m[1].xyz, m[2].xyz );
+}
 
 #define ogre_float4x3 float3x4
 
