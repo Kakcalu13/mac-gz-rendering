@@ -162,38 +162,6 @@ void Ogre2RenderTarget::Copy(Image &_image) const
     }
   }
 
-  // Diagnostic: log pixel samples periodically to catch post-scene-load frames.
-  {
-    static int diagCount = 0;
-    ++diagCount;
-    // Log frame 1..5, then every 30th frame up to 600 (about 20 seconds at 30fps)
-    bool doLog = (diagCount <= 5) || (diagCount <= 600 && diagCount % 30 == 0);
-    if (doLog)
-    {
-      // Only log if we see non-uniform pixels (scene loaded) or first few frames.
-      // Sample a grid of 9 points to catch objects wherever they are.
-      std::cerr << "[DIAG] frame=" << diagCount
-                << " gpuFmt=" << (int)ogrePfGpu
-                << " " << this->width << "x" << this->height << "\n";
-      auto samplePixel = [&](uint32_t col, uint32_t row, const char *label)
-      {
-          if (col >= this->width || row >= this->height) return;
-          const uint8_t *p = src + row * srcBytesPerRow + col * srcBpp;
-          std::cerr << "  [DIAG] px[" << label << "]:";
-          for (size_t b = 0; b < std::min(srcBpp, size_t(4)); ++b)
-            std::cerr << " " << (int)p[b];
-          std::cerr << "\n";
-      };
-      uint32_t w4 = this->width/4, w2 = this->width/2, w3 = 3*this->width/4;
-      uint32_t h4 = this->height/4, h2 = this->height/2, h3 = 3*this->height/4;
-      samplePixel(w2, h2, "C");    // center
-      samplePixel(w4, h4, "TL");   // top-left quadrant
-      samplePixel(w3, h4, "TR");   // top-right quadrant
-      samplePixel(w4, h3, "BL");   // bottom-left quadrant
-      samplePixel(w3, h3, "BR");   // bottom-right quadrant
-    }
-  }
-
   ticket->unmap();
   texMgr->destroyAsyncTextureTicket(ticket);
 }
