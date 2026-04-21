@@ -534,7 +534,7 @@ void Ogre2DepthCamera::CreateDepthTexture()
     depthTexDef->heightFactor = 1;
     depthTexDef->format = Ogre::PFG_D32_FLOAT;
     depthTexDef->fsaa = "1";
-    depthTexDef->depthBufferId = Ogre::DepthBuffer::POOL_DEFAULT;
+    depthTexDef->depthBufferId = Ogre::DepthBuffer::POOL_NON_SHAREABLE;
     depthTexDef->depthBufferFormat = Ogre::PFG_UNKNOWN;
 
     Ogre::TextureDefinitionBase::TextureDefinition *colorTexDef =
@@ -554,6 +554,19 @@ void Ogre2DepthCamera::CreateDepthTexture()
     colorTexDef->depthBufferId = Ogre::DepthBuffer::POOL_DEFAULT;
     colorTexDef->depthBufferFormat = Ogre::PFG_D32_FLOAT;
     colorTexDef->preferDepthTexture = true;
+
+    // ogre-next 2.3 requires explicit RTVs for TEXTURE_LOCAL textures
+    // used as render targets (they are not auto-created unlike TEXTURE_INPUT).
+    Ogre::RenderTargetViewDef *colorTexRtv =
+        baseNodeDef->addRenderTextureView("colorTexture");
+    colorTexRtv->setForTextureDefinition("colorTexture", colorTexDef);
+    // Explicitly wire depthTexture as the depth attachment so the scene pass
+    // writes to it (moving it out of Undefined state for subsequent sampling).
+    colorTexRtv->depthAttachment.textureName = "depthTexture";
+
+    Ogre::RenderTargetViewDef *rt0Rtv =
+        baseNodeDef->addRenderTextureView("rt0");
+    rt0Rtv->setForTextureDefinition("rt0", rt0TexDef);
 
     baseNodeDef->setNumTargetPass(2);
     Ogre::CompositorTargetDef *colorTargetDef =

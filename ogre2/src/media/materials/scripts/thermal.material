@@ -15,7 +15,7 @@
  *
  */
 
-vertex_program ThermalCameraVS glsl
+vertex_program ThermalCameraVS_GLSL glsl
 {
   source depth_camera_vs.glsl
   default_params
@@ -24,7 +24,23 @@ vertex_program ThermalCameraVS glsl
   }
 }
 
-fragment_program ThermalCameraFS glsl
+vertex_program ThermalCameraVS_Metal metal
+{
+  source depth_camera_vs.metal
+  shader_reflection_pair_hint ThermalCameraFS_Metal
+  default_params
+  {
+    param_named_auto worldViewProj worldviewproj_matrix
+  }
+}
+
+vertex_program ThermalCameraVS unified
+{
+  delegate ThermalCameraVS_GLSL
+  delegate ThermalCameraVS_Metal
+}
+
+fragment_program ThermalCameraFS_GLSL glsl
 {
   source thermal_camera_fs.glsl
 
@@ -33,6 +49,18 @@ fragment_program ThermalCameraFS glsl
     param_named depthTexture int 0
     param_named colorTexture int 1
   }
+}
+
+fragment_program ThermalCameraFS_Metal metal
+{
+  source thermal_camera_fs.metal
+  shader_reflection_pair_hint ThermalCameraVS_Metal
+}
+
+fragment_program ThermalCameraFS unified
+{
+  delegate ThermalCameraFS_GLSL
+  delegate ThermalCameraFS_Metal
 }
 
 material ThermalCamera
@@ -57,7 +85,7 @@ material ThermalCamera
   }
 }
 
-vertex_program heat_source_vs glsl
+vertex_program heat_source_vs_GLSL glsl
 {
   source plain_color_vs.glsl
 
@@ -67,7 +95,23 @@ vertex_program heat_source_vs glsl
   }
 }
 
-fragment_program heat_source_fs glsl
+vertex_program heat_source_vs_Metal metal
+{
+  source plain_color_vs.metal
+  shader_reflection_pair_hint heat_source_fs_Metal
+  default_params
+  {
+    param_named_auto worldViewProj worldviewproj_matrix
+  }
+}
+
+vertex_program heat_source_vs unified
+{
+  delegate heat_source_vs_GLSL
+  delegate heat_source_vs_Metal
+}
+
+fragment_program heat_source_fs_GLSL glsl
 {
   source plain_color_fs.glsl
 
@@ -75,6 +119,18 @@ fragment_program heat_source_fs glsl
   {
     param_named inColor float4 1 1 1 1
   }
+}
+
+fragment_program heat_source_fs_Metal metal
+{
+  source plain_color_fs.metal
+  shader_reflection_pair_hint heat_source_vs_Metal
+}
+
+fragment_program heat_source_fs unified
+{
+  delegate heat_source_fs_GLSL
+  delegate heat_source_fs_Metal
 }
 
 material ThermalHeatSource

@@ -15,7 +15,7 @@
  *
  */
 
-vertex_program DepthCameraVS glsl
+vertex_program DepthCameraVS_GLSL glsl
 {
   source depth_camera_vs.glsl
   default_params
@@ -24,15 +24,42 @@ vertex_program DepthCameraVS glsl
   }
 }
 
-fragment_program DepthCameraFS glsl
+vertex_program DepthCameraVS_Metal metal
+{
+  source depth_camera_vs.metal
+  shader_reflection_pair_hint DepthCameraFS_Metal
+  default_params
+  {
+    param_named_auto worldViewProj worldviewproj_matrix
+  }
+}
+
+vertex_program DepthCameraVS unified
+{
+  delegate DepthCameraVS_GLSL
+  delegate DepthCameraVS_Metal
+}
+
+fragment_program DepthCameraFS_GLSL glsl
 {
   source depth_camera_fs.glsl
-
   default_params
   {
     param_named depthTexture int 0
     param_named colorTexture int 1
   }
+}
+
+fragment_program DepthCameraFS_Metal metal
+{
+  source depth_camera_fs.metal
+  shader_reflection_pair_hint DepthCameraVS_Metal
+}
+
+fragment_program DepthCameraFS unified
+{
+  delegate DepthCameraFS_GLSL
+  delegate DepthCameraFS_Metal
 }
 
 material DepthCamera
@@ -58,7 +85,7 @@ material DepthCamera
 }
 
 
-vertex_program DepthCameraFinalVS glsl
+vertex_program DepthCameraFinalVS_GLSL glsl
 {
   source depth_camera_final_vs.glsl
   default_params
@@ -67,16 +94,42 @@ vertex_program DepthCameraFinalVS glsl
   }
 }
 
-fragment_program DepthCameraFinalFS glsl
+vertex_program DepthCameraFinalVS_Metal metal
+{
+  source depth_camera_final_vs.metal
+  shader_reflection_pair_hint DepthCameraFinalFS_Metal
+  default_params
+  {
+    param_named_auto worldViewProj worldviewproj_matrix
+  }
+}
+
+vertex_program DepthCameraFinalVS unified
+{
+  delegate DepthCameraFinalVS_GLSL
+  delegate DepthCameraFinalVS_Metal
+}
+
+fragment_program DepthCameraFinalFS_GLSL glsl
 {
   source depth_camera_final_fs.glsl
-
   default_params
   {
     param_named inputTexture int 0
-
     param_named_auto texResolution texture_size 0
   }
+}
+
+fragment_program DepthCameraFinalFS_Metal metal
+{
+  source depth_camera_final_fs.metal
+  shader_reflection_pair_hint DepthCameraFinalVS_Metal
+}
+
+fragment_program DepthCameraFinalFS unified
+{
+  delegate DepthCameraFinalFS_GLSL
+  delegate DepthCameraFinalFS_Metal
 }
 
 material DepthCameraFinal
