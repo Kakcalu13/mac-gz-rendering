@@ -88,8 +88,8 @@ unsigned int Ogre2Camera::AntiAliasing() const
 //////////////////////////////////////////////////
 void Ogre2Camera::SetAntiAliasing(const unsigned int _aa)
 {
-  BaseCamera::SetAntiAliasing(_aa);
-  this->renderTexture->SetAntiAliasing(_aa);
+  BaseCamera::SetAntiAliasing(0u);
+  this->renderTexture->SetAntiAliasing(0u);
 }
 
 //////////////////////////////////////////////////
