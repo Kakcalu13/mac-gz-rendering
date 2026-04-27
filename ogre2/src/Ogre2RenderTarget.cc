@@ -290,31 +290,64 @@ void Ogre2RenderTarget::Render()
 //////////////////////////////////////////////////
 void Ogre2RenderTarget::UpdateBackgroundColor()
 {
-  if (this->colorDirty)
+  if (!this->colorDirty)
+    return;
+
+  if (!this->ogreCompositorWorkspace)
   {
-    // Update the clear color on the running compositor pass instance.
-    // NOTE: modifying CompositorPassClearDef::mClearColour only affects future
-    // workspace rebuilds, because the clear color is copied into the pass's
-    // RenderPassDescriptor during initialization. We must call setClearColour()
-    // on the actual RenderPassDescriptor to take effect immediately.
-    auto nodeSeq = this->ogreCompositorWorkspace->getNodeSequence();
-    for (auto *node : nodeSeq)
-    {
-      for (auto *pass : node->_getPasses())
-      {
-        auto *clearPass = dynamic_cast<Ogre::CompositorPassClear *>(pass);
-        if (clearPass)
-        {
-          clearPass->getRenderPassDesc()->setClearColour(
-              0u, this->ogreBackgroundColor);
-          this->colorDirty = false;
-          return;
-        }
-      }
-    }
-    ignerr << "UpdateBackgroundColor: no clear pass found in compositor!\n";
     this->colorDirty = false;
+    return;
   }
+
+  // On Metal/TBDR, the clear color is read from CompositorPassClearDef
+  // each time the MTLRenderPassDescriptor is built (load action). Updating
+  // the live RenderPassDescriptor via setClearColour() does NOT propagate
+  // to subsequent renders on Metal. We must:
+  //   1. Update mClearColour on the pass DEFINITION (the canonical source).
+  //   2. Update the live descriptor too (helps GL backends apply without a
+  //      rebuild).
+  //   3. Rebuild the workspace so Metal reconstructs its descriptors from
+  //      the now-updated def. Cost: one workspace rebuild per background
+  //      color change (typically once per scene-config), not per frame.
+  bool found = false;
+  auto nodeSeq = this->ogreCompositorWorkspace->getNodeSequence();
+  for (auto *node : nodeSeq)
+  {
+    for (auto *pass : node->_getPasses())
+    {
+      auto *clearPass = dynamic_cast<Ogre::CompositorPassClear *>(pass);
+      if (!clearPass)
+        continue;
+
+      // Update the def (canonical, read by Metal at descriptor build).
+      auto *clearDef = const_cast<Ogre::CompositorPassClearDef *>(
+          static_cast<const Ogre::CompositorPassClearDef *>(
+              clearPass->getDefinition()));
+      clearDef->mClearColour[0] = this->ogreBackgroundColor;
+
+      // Update the live descriptor (for GL backends).
+      clearPass->getRenderPassDesc()->setClearColour(
+          0u, this->ogreBackgroundColor);
+
+      found = true;
+      break;
+    }
+    if (found)
+      break;
+  }
+
+  this->colorDirty = false;
+
+  if (!found)
+  {
+    ignerr << "UpdateBackgroundColor: no clear pass found in compositor!\n";
+    return;
+  }
+
+  // Force workspace rebuild so Metal reconstructs its MTLRenderPassDescriptor
+  // from the updated def. Safe here because UpdateBackgroundColor() is called
+  // at the start of PreRender, before any rendering occurs.
+  this->RebuildCompositor();
 }
 
 //////////////////////////////////////////////////
