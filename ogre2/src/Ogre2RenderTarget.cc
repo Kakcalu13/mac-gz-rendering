@@ -100,6 +100,7 @@ void Ogre2RenderTarget::Copy(Image &_image) const
 
   // ogre-next 2.3: use TextureGpu + AsyncTextureTicket for downloading pixels
   Ogre::TextureGpu *tex = this->OgreTexture();
+
   if (!tex)
   {
     ignerr << "OgreTexture() returned nullptr – cannot copy render target" << std::endl;
@@ -114,7 +115,30 @@ void Ogre2RenderTarget::Copy(Image &_image) const
   Ogre::AsyncTextureTicket *ticket =
       texMgr->createAsyncTextureTicket(this->width, this->height, 1,
           Ogre::TextureTypes::Type2D, ogrePfGpu);
-  ticket->download(tex, 0, true);
+
+
+  if (tex->getSampleDescription().getMaxSamples() > 1)
+  {
+    // Force explicit resolve before readback (Metal MSAA path).
+    Ogre::TextureGpu *resolveTex = texMgr->createTexture(
+        "resolve_" + tex->getNameStr(),
+        Ogre::GpuPageOutStrategy::Discard,
+        Ogre::TextureFlags::RenderToTexture,
+        Ogre::TextureTypes::Type2D,
+        Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME);
+    resolveTex->setResolution(tex->getWidth(), tex->getHeight());
+    resolveTex->setPixelFormat(tex->getPixelFormat());
+    resolveTex->setNumMipmaps(1);
+    resolveTex->scheduleTransitionTo(Ogre::GpuResidency::Resident);
+
+    tex->_resolveTo(resolveTex);
+    ticket->download(resolveTex, 0, true);
+    texMgr->destroyTexture(resolveTex);
+  }
+  else
+  {
+    ticket->download(tex, 0, true);
+  }
 
 
   Ogre::TextureBox box = ticket->map(0);
@@ -127,9 +151,8 @@ void Ogre2RenderTarget::Copy(Image &_image) const
       Ogre::PixelFormatGpuUtils::getBytesPerPixel(ogrePfGpu);
   const size_t srcBytesPerRow = box.bytesPerRow;
 
-  // Compute the destination bytes-per-pixel from the image's own memory size.
-  const size_t dstTotalBytes = _image.MemorySize();
-  const size_t dstBpp = dstTotalBytes / (this->width * this->height);
+  // Destination bytes-per-pixel from the image's pixel format
+  const size_t dstBpp = PixelUtil::BytesPerPixel(_image.Format());
   const size_t dstBytesPerRow = this->width * dstBpp;
 
   uint8_t *dst = static_cast<uint8_t *>(_image.Data());
