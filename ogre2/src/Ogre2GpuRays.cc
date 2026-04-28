@@ -535,14 +535,15 @@ void Ogre2GpuRays::CreateSampleTexture()
   this->dataPtr->cubeUVTexture->setResolution(
       this->dataPtr->w2nd, this->dataPtr->h2nd);
   this->dataPtr->cubeUVTexture->setNumMipmaps(1u);
-  this->dataPtr->cubeUVTexture->setPixelFormat(Ogre::PFG_RGB32_FLOAT);
+  this->dataPtr->cubeUVTexture->setPixelFormat(Ogre::PFG_RGBA32_FLOAT);
   this->dataPtr->cubeUVTexture->scheduleTransitionTo(
       Ogre::GpuResidency::Resident);
 
   // Build UV data in a local buffer first
   const size_t numPixels =
       static_cast<size_t>(this->dataPtr->w2nd) * this->dataPtr->h2nd;
-  std::vector<float> uvData(numPixels * 3u);
+  // RGBA32 (no RGB32 on Metal); 4th component unused, set to 0
+  std::vector<float> uvData(numPixels * 4u);
   float *pDest = uvData.data();
 
   double v = vmin;
@@ -566,6 +567,8 @@ void Ogre2GpuRays::CreateSampleTexture()
       *pDest++ = static_cast<float>(uv.Y());
       // face
       *pDest++ = static_cast<float>(faceIdx);
+      // padding (unused)
+      *pDest++ = 0.0f;
 
        h += hStep;
     }
@@ -575,11 +578,11 @@ void Ogre2GpuRays::CreateSampleTexture()
   // Upload via StagingTexture
   Ogre::StagingTexture *stagingTex = texMgr->getStagingTexture(
       this->dataPtr->w2nd, this->dataPtr->h2nd,
-      1u, 1u, Ogre::PFG_RGB32_FLOAT);
+      1u, 1u, Ogre::PFG_RGBA32_FLOAT);
   stagingTex->startMapRegion();
   Ogre::TextureBox dstBox = stagingTex->mapRegion(
       this->dataPtr->w2nd, this->dataPtr->h2nd,
-      1u, 1u, Ogre::PFG_RGB32_FLOAT);
+      1u, 1u, Ogre::PFG_RGBA32_FLOAT);
   memcpy(dstBox.data, uvData.data(), uvData.size() * sizeof(float));
   stagingTex->stopMapRegion();
   stagingTex->upload(dstBox, this->dataPtr->cubeUVTexture, 0u, nullptr, nullptr, true);
@@ -682,7 +685,7 @@ void Ogre2GpuRays::Setup1stPass()
     depthTexDef->heightFactor = 1;
     depthTexDef->format = Ogre::PFG_D32_FLOAT;
     depthTexDef->fsaa = "1";
-    depthTexDef->depthBufferId = Ogre::DepthBuffer::POOL_DEFAULT;
+    depthTexDef->depthBufferId = Ogre::DepthBuffer::POOL_INVALID;
     depthTexDef->depthBufferFormat = Ogre::PFG_UNKNOWN;
 
     Ogre::TextureDefinitionBase::TextureDefinition *colorTexDef =
@@ -699,6 +702,15 @@ void Ogre2GpuRays::Setup1stPass()
     colorTexDef->depthBufferId = Ogre::DepthBuffer::POOL_DEFAULT;
     colorTexDef->depthBufferFormat = Ogre::PFG_D32_FLOAT;
     colorTexDef->preferDepthTexture = true;
+
+    // ogre-next 2.3 requires explicit RTVs for TEXTURE_LOCAL render targets.
+    // Wire depthTexture as the depth attachment of colorTexture so the scene
+    // pass writes hardware depth into depthTexture (same pattern as the depth
+    // camera compositor).
+    Ogre::RenderTargetViewDef *colorTexRtv =
+        nodeDef->addRenderTextureView("colorTexture");
+    colorTexRtv->setForTextureDefinition("colorTexture", colorTexDef);
+    colorTexRtv->depthAttachment.textureName = "depthTexture";
 
     nodeDef->setNumTargetPass(2);
 
@@ -796,7 +808,7 @@ void Ogre2GpuRays::Setup1stPass()
       this->dataPtr->firstPassTextures[i]->setResolution(
           this->dataPtr->w1st, this->dataPtr->h1st);
       this->dataPtr->firstPassTextures[i]->setNumMipmaps(1u);
-      this->dataPtr->firstPassTextures[i]->setPixelFormat(Ogre::PFG_RGB32_FLOAT);
+      this->dataPtr->firstPassTextures[i]->setPixelFormat(Ogre::PFG_RGBA32_FLOAT);
       this->dataPtr->firstPassTextures[i]->scheduleTransitionTo(
           Ogre::GpuResidency::Resident);
     }
@@ -832,7 +844,7 @@ void Ogre2GpuRays::Setup2ndPass()
     this->dataPtr->secondPassTexture->setResolution(
         this->dataPtr->w2nd, this->dataPtr->h2nd);
     this->dataPtr->secondPassTexture->setNumMipmaps(1u);
-    this->dataPtr->secondPassTexture->setPixelFormat(Ogre::PFG_RGB32_FLOAT);
+    this->dataPtr->secondPassTexture->setPixelFormat(Ogre::PFG_RGBA32_FLOAT);
     this->dataPtr->secondPassTexture->scheduleTransitionTo(
         Ogre::GpuResidency::Resident);
   }
@@ -989,7 +1001,7 @@ void Ogre2GpuRays::PostRender()
   unsigned int width = this->dataPtr->w2nd;
   unsigned int height = this->dataPtr->h2nd;
 
-  // RGB32_FLOAT: 3 floats per pixel
+  // 3 floats per pixel (range, retro, unused) in the output buffer
   int len = width * height * this->Channels();
   size_t size = static_cast<size_t>(len) * sizeof(float);
 
@@ -999,17 +1011,28 @@ void Ogre2GpuRays::PostRender()
   }
 
   // blit data from gpu to cpu using AsyncTextureTicket
+  // Texture is RGBA32 (Metal has no RGB32); strip 4th channel on readback
   {
     auto engine = Ogre2RenderEngine::Instance();
     Ogre::TextureGpuManager *texMgr =
         engine->OgreRoot()->getRenderSystem()->getTextureGpuManager();
     Ogre::AsyncTextureTicket *ticket = texMgr->createAsyncTextureTicket(
         width, height, 1u, Ogre::TextureTypes::Type2D,
-        Ogre::PFG_RGB32_FLOAT);
+        Ogre::PFG_RGBA32_FLOAT);
     ticket->download(this->dataPtr->secondPassTexture, 0u, true);
     Ogre::TextureBox box = ticket->map(0u);
     if (box.data)
-      memcpy(this->dataPtr->gpuRaysBuffer, box.data, size);
+    {
+      const float *src = static_cast<const float *>(box.data);
+      float *dst = this->dataPtr->gpuRaysBuffer;
+      const size_t numPx = static_cast<size_t>(width) * height;
+      for (size_t px = 0; px < numPx; ++px)
+      {
+        dst[px * 3 + 0] = src[px * 4 + 0];
+        dst[px * 3 + 1] = src[px * 4 + 1];
+        dst[px * 3 + 2] = src[px * 4 + 2];
+      }
+    }
     ticket->unmap();
     texMgr->destroyAsyncTextureTicket(ticket);
   }

@@ -18,6 +18,7 @@
 #ifndef GZ_RENDERING_OGRE2_OGRE2MATERIALSWITCHER_HH_
 #define GZ_RENDERING_OGRE2_OGRE2MATERIALSWITCHER_HH_
 
+#include <cstdint>
 #include <map>
 #include <string>
 
@@ -26,6 +27,9 @@
 #include "gz/rendering/ogre2/Export.hh"
 #include "gz/rendering/ogre2/Ogre2Includes.hh"
 #include "gz/rendering/ogre2/Ogre2RenderTypes.hh"
+
+// Forward-declare HLMS Unlit types to avoid pulling in heavy Ogre headers here
+namespace Ogre { class HlmsUnlitDatablock; }
 
 namespace ignition
 {
@@ -74,14 +78,16 @@ namespace ignition
       /// \brief A map of ogre sub item pointer to their original hlms material
       private: std::map<Ogre::SubItem *, Ogre::HlmsDatablock *> datablockMap;
 
-      /// \brief Ogre v1 material consisting of a shader that changes the
-      /// appearance of item to use a unique color for mouse picking
-      private: Ogre::MaterialPtr plainMaterial;
+      /// \brief Get or create a cached HLMS Unlit datablock for a given color.
+      /// \param[in] _color  The solid color to encode.
+      /// \param[in] _overlay  If true, depth check/write are disabled (for
+      ///                      items that live in the overlay render queue).
+      private: Ogre::HlmsUnlitDatablock *GetOrCreateDatablock(
+                   const gz::math::Color &_color, bool _overlay);
 
-      /// \brief Ogre v1 material consisting of a shader that changes the
-      /// appearance of item to use a unique color for mouse picking. In
-      /// addition, the depth check and depth write properties disabled.
-      private: Ogre::MaterialPtr plainOverlayMaterial;
+      /// \brief Cache of HLMS Unlit datablocks keyed by color RGBA + overlay
+      /// flag (high bit set for overlay). Populated lazily; destroyed in dtor.
+      private: std::map<uint32_t, Ogre::HlmsUnlitDatablock *> selectionDatablocks;
 
       /// \brief Increment unique color value that will be assigned to the
       /// next renderable

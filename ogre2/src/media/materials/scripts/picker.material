@@ -1,4 +1,5 @@
-vertex_program plaincolor_vs glsl
+// GLSL vertex program (used on GL/Vulkan)
+vertex_program plaincolor_vs_GLSL glsl
 {
   source plain_color_vs.glsl
 
@@ -8,7 +9,8 @@ vertex_program plaincolor_vs glsl
   }
 }
 
-fragment_program plaincolor_fs glsl
+// GLSL fragment program (used on GL/Vulkan)
+fragment_program plaincolor_fs_GLSL glsl
 {
   source plain_color_fs.glsl
 
@@ -16,6 +18,44 @@ fragment_program plaincolor_fs glsl
   {
     param_named inColor float4 1 1 1 1
   }
+}
+
+// Metal vertex program (used on macOS/iOS)
+vertex_program plaincolor_vs_Metal metal
+{
+  source plain_color_vs.metal
+  entry_point main_metal
+
+  default_params
+  {
+    param_named_auto worldViewProj worldviewproj_matrix
+  }
+}
+
+// Metal fragment program (used on macOS/iOS)
+fragment_program plaincolor_fs_Metal metal
+{
+  source plain_color_fs.metal
+  entry_point main_metal
+  shader_reflection_pair_hint plaincolor_vs_Metal
+
+  default_params
+  {
+    param_named inColor float4 1 1 1 1
+  }
+}
+
+// Unified programs: ogre picks the right variant for the current render system
+vertex_program plaincolor_vs unified
+{
+  delegate plaincolor_vs_Metal
+  delegate plaincolor_vs_GLSL
+}
+
+fragment_program plaincolor_fs unified
+{
+  delegate plaincolor_fs_Metal
+  delegate plaincolor_fs_GLSL
 }
 
 material ign-rendering/plain_color

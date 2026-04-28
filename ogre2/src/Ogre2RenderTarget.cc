@@ -100,6 +100,7 @@ void Ogre2RenderTarget::Copy(Image &_image) const
 
   // ogre-next 2.3: use TextureGpu + AsyncTextureTicket for downloading pixels
   Ogre::TextureGpu *tex = this->OgreTexture();
+
   if (!tex)
   {
     ignerr << "OgreTexture() returned nullptr – cannot copy render target" << std::endl;
@@ -109,63 +110,38 @@ void Ogre2RenderTarget::Copy(Image &_image) const
   Ogre::TextureGpuManager *texMgr =
       Ogre2RenderEngine::Instance()->OgreRoot()->getRenderSystem()->getTextureGpuManager();
 
-  // Try downloading from rt0 (intermediate rendered texture) instead of
-  // rt_output to isolate whether the compositor chain is writing correctly.
-  // rt0 is the output of PbsMaterialsRenderingNode (the scene render).
-  // If rt0 is non-black but rt_output is black, the problem is in FinalComposition.
-  static int copyCount = 0;
-  ++copyCount;
-  if (copyCount <= 3 && this->ogreCompositorWorkspace)
-  {
-    auto nodeSeq = this->ogreCompositorWorkspace->getNodeSequence();
-    if (!nodeSeq.empty())
-    {
-      // nodeSeq[0] = PbsMaterialsRenderingNode, which outputs rt0
-      auto *node = nodeSeq[0];
-      const auto &localTexes = node->getLocalTextures();
-      ignerr << "Copy#" << copyCount << " numLocalTextures=" << localTexes.size() << "\n";
-      for (size_t i = 0; i < localTexes.size() && i < 2; ++i)
-      {
-        auto *localTex = localTexes[i];  // CompositorChannel = TextureGpu*
-        if (localTex && localTex->getResidencyStatus() == Ogre::GpuResidency::Resident)
-        {
-          Ogre::AsyncTextureTicket *rt0Ticket =
-              texMgr->createAsyncTextureTicket(
-                  localTex->getWidth(), localTex->getHeight(), 1,
-                  Ogre::TextureTypes::Type2D, localTex->getPixelFormat());
-          rt0Ticket->download(localTex, 0, true);
-          Ogre::TextureBox rt0Box = rt0Ticket->map(0);
-          const uint8_t *rp = static_cast<const uint8_t*>(rt0Box.data);
-          if (rp)
-            ignerr << "Copy#" << copyCount << " rt[" << i << "] "
-                   << localTex->getWidth() << "x" << localTex->getHeight()
-                   << " p[0]=" << (int)rp[0] << "," << (int)rp[1] << ","
-                   << (int)rp[2] << "," << (int)rp[3] << "\n";
-          rt0Ticket->unmap();
-          texMgr->destroyAsyncTextureTicket(rt0Ticket);
-        }
-      }
-    }
-  }
-
   Ogre::PixelFormatGpu ogrePfGpu = tex->getPixelFormat();
 
   Ogre::AsyncTextureTicket *ticket =
       texMgr->createAsyncTextureTicket(this->width, this->height, 1,
           Ogre::TextureTypes::Type2D, ogrePfGpu);
-  ticket->download(tex, 0, true);
+
+
+  if (tex->getSampleDescription().getMaxSamples() > 1)
+  {
+    // Force explicit resolve before readback (Metal MSAA path).
+    Ogre::TextureGpu *resolveTex = texMgr->createTexture(
+        "resolve_" + tex->getNameStr(),
+        Ogre::GpuPageOutStrategy::Discard,
+        Ogre::TextureFlags::RenderToTexture,
+        Ogre::TextureTypes::Type2D,
+        Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME);
+    resolveTex->setResolution(tex->getWidth(), tex->getHeight());
+    resolveTex->setPixelFormat(tex->getPixelFormat());
+    resolveTex->setNumMipmaps(1);
+    resolveTex->scheduleTransitionTo(Ogre::GpuResidency::Resident);
+
+    tex->_resolveTo(resolveTex);
+    ticket->download(resolveTex, 0, true);
+    texMgr->destroyTexture(resolveTex);
+  }
+  else
+  {
+    ticket->download(tex, 0, true);
+  }
+
 
   Ogre::TextureBox box = ticket->map(0);
-
-  if (copyCount <= 3)
-  {
-    const uint8_t *p = static_cast<const uint8_t *>(box.data);
-    if (p)
-      ignerr << "Copy#" << copyCount << " box.data ok bytesPerRow=" << box.bytesPerRow
-             << " p[0]=" << (int)p[0] << "," << (int)p[1] << "," << (int)p[2] << "," << (int)p[3] << "\n";
-    else
-      ignerr << "Copy#" << copyCount << " box.data is NULL!\n";
-  }
   // Copy to image data buffer (row by row to handle pitch differences).
   // NOTE: gz-rendering's PF_R8G8B8 maps to Ogre's PFG_RGBA8_UNORM (4 bytes/pixel)
   // because Ogre2 has no native 24-bit RGB format. The Image buffer was allocated
@@ -175,32 +151,36 @@ void Ogre2RenderTarget::Copy(Image &_image) const
       Ogre::PixelFormatGpuUtils::getBytesPerPixel(ogrePfGpu);
   const size_t srcBytesPerRow = box.bytesPerRow;
 
-  // Compute the destination bytes-per-pixel from the image's own memory size.
-  const size_t dstTotalBytes = _image.MemorySize();
-  const size_t dstBpp = dstTotalBytes / (this->width * this->height);
+  // Destination bytes-per-pixel from the image's pixel format
+  const size_t dstBpp = PixelUtil::BytesPerPixel(_image.Format());
   const size_t dstBytesPerRow = this->width * dstBpp;
 
   uint8_t *dst = static_cast<uint8_t *>(_image.Data());
   const uint8_t *src = static_cast<const uint8_t *>(box.data);
 
-  if (srcBpp == dstBpp)
-  {
-    // Fast path: same number of bytes per pixel, just handle row pitch.
+  // PFG_BGRA8_UNORM (used on Metal RTTs) stores bytes as [B, G, R, A].
+  // gz-rendering Image expects RGB byte order, so swap B↔R after copying.
+  const bool needBGRASwizzle = (ogrePfGpu == Ogre::PFG_BGRA8_UNORM ||
+                                ogrePfGpu == Ogre::PFG_BGRA8_UNORM_SRGB);
+
+  if (srcBpp == dstBpp && !needBGRASwizzle) {
+    // Fast path: same bpp, no swizzle needed.
     for (uint32_t row = 0; row < this->height; ++row)
       memcpy(dst + row * dstBytesPerRow, src + row * srcBytesPerRow, dstBytesPerRow);
   }
   else
   {
-    // Slow path: different bpp (e.g. GPU returns RGBA8 but image wants RGB8).
-    // Copy only min(srcBpp, dstBpp) bytes per pixel.
+    // Per-pixel copy: different bpp or BGRA swizzle required.
     const size_t copyBpp = std::min(srcBpp, dstBpp);
     for (uint32_t row = 0; row < this->height; ++row)
     {
       for (uint32_t col = 0; col < this->width; ++col)
       {
-        memcpy(dst + row * dstBytesPerRow + col * dstBpp,
-               src + row * srcBytesPerRow + col * srcBpp,
-               copyBpp);
+        const uint8_t *srcPx = src + row * srcBytesPerRow + col * srcBpp;
+        uint8_t *dstPx = dst + row * dstBytesPerRow + col * dstBpp;
+        memcpy(dstPx, srcPx, copyBpp);
+        if (needBGRASwizzle && copyBpp >= 3)
+          std::swap(dstPx[0], dstPx[2]);  // B↔R
       }
     }
   }
@@ -252,6 +232,13 @@ void Ogre2RenderTarget::SetAntiAliasing(unsigned int _aa)
 void Ogre2RenderTarget::PreRender()
 {
   BaseRenderTarget::PreRender();
+
+  // When shadow-casting lights are added/removed after the compositor was
+  // initially built, the shadow node definition becomes stale. Rebuild the
+  // compositor so UpdateShadowNode() runs with the current light count.
+  if (this->ogreCompositorWorkspace && this->scene->ShadowsDirty())
+    this->RebuildCompositor();
+
   this->UpdateBackgroundColor();
 
   if (this->material)
@@ -303,31 +290,64 @@ void Ogre2RenderTarget::Render()
 //////////////////////////////////////////////////
 void Ogre2RenderTarget::UpdateBackgroundColor()
 {
-  if (this->colorDirty)
+  if (!this->colorDirty)
+    return;
+
+  if (!this->ogreCompositorWorkspace)
   {
-    // Update the clear color on the running compositor pass instance.
-    // NOTE: modifying CompositorPassClearDef::mClearColour only affects future
-    // workspace rebuilds, because the clear color is copied into the pass's
-    // RenderPassDescriptor during initialization. We must call setClearColour()
-    // on the actual RenderPassDescriptor to take effect immediately.
-    auto nodeSeq = this->ogreCompositorWorkspace->getNodeSequence();
-    for (auto *node : nodeSeq)
-    {
-      for (auto *pass : node->_getPasses())
-      {
-        auto *clearPass = dynamic_cast<Ogre::CompositorPassClear *>(pass);
-        if (clearPass)
-        {
-          clearPass->getRenderPassDesc()->setClearColour(
-              0u, this->ogreBackgroundColor);
-          this->colorDirty = false;
-          return;
-        }
-      }
-    }
-    ignerr << "UpdateBackgroundColor: no clear pass found in compositor!\n";
     this->colorDirty = false;
+    return;
   }
+
+  // On Metal/TBDR, the clear color is read from CompositorPassClearDef
+  // each time the MTLRenderPassDescriptor is built (load action). Updating
+  // the live RenderPassDescriptor via setClearColour() does NOT propagate
+  // to subsequent renders on Metal. We must:
+  //   1. Update mClearColour on the pass DEFINITION (the canonical source).
+  //   2. Update the live descriptor too (helps GL backends apply without a
+  //      rebuild).
+  //   3. Rebuild the workspace so Metal reconstructs its descriptors from
+  //      the now-updated def. Cost: one workspace rebuild per background
+  //      color change (typically once per scene-config), not per frame.
+  bool found = false;
+  auto nodeSeq = this->ogreCompositorWorkspace->getNodeSequence();
+  for (auto *node : nodeSeq)
+  {
+    for (auto *pass : node->_getPasses())
+    {
+      auto *clearPass = dynamic_cast<Ogre::CompositorPassClear *>(pass);
+      if (!clearPass)
+        continue;
+
+      // Update the def (canonical, read by Metal at descriptor build).
+      auto *clearDef = const_cast<Ogre::CompositorPassClearDef *>(
+          static_cast<const Ogre::CompositorPassClearDef *>(
+              clearPass->getDefinition()));
+      clearDef->mClearColour[0] = this->ogreBackgroundColor;
+
+      // Update the live descriptor (for GL backends).
+      clearPass->getRenderPassDesc()->setClearColour(
+          0u, this->ogreBackgroundColor);
+
+      found = true;
+      break;
+    }
+    if (found)
+      break;
+  }
+
+  this->colorDirty = false;
+
+  if (!found)
+  {
+    ignerr << "UpdateBackgroundColor: no clear pass found in compositor!\n";
+    return;
+  }
+
+  // Force workspace rebuild so Metal reconstructs its MTLRenderPassDescriptor
+  // from the updated def. Safe here because UpdateBackgroundColor() is called
+  // at the start of PreRender, before any rendering occurs.
+  this->RebuildCompositor();
 }
 
 //////////////////////////////////////////////////
@@ -950,8 +970,18 @@ void Ogre2RenderTexture::BuildTarget()
   Ogre::TextureGpuManager *texMgr =
       Ogre2RenderEngine::Instance()->OgreRoot()->getRenderSystem()->getTextureGpuManager();
 
-  Ogre::PixelFormatGpu ogreFormat =
-      Ogre2Conversions::Convert(this->format);
+  Ogre::PixelFormatGpu ogreFormat = Ogre2Conversions::Convert(this->format);
+
+  // On Metal, use BGRA8 to match the Metal window surface format.
+  // Metal compiles separate PSOs per render target format. Using BGRA8 reuses
+  // the same PSOs already compiled for the Metal window, avoiding blank RTT
+  // output when PBS shaders haven't been compiled for RGBA8 targets.
+  // Copy() swaps B↔R channels when reading back BGRA8 data.
+  {
+    auto *rs = Ogre2RenderEngine::Instance()->OgreRoot()->getRenderSystem();
+    if (rs && rs->getName().find("Metal") != std::string::npos)
+      ogreFormat = Ogre::PFG_BGRA8_UNORM;
+  }
 
   // check if target fsaa is supported
   uint32_t fsaa = 0;

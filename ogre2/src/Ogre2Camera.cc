@@ -88,8 +88,8 @@ unsigned int Ogre2Camera::AntiAliasing() const
 //////////////////////////////////////////////////
 void Ogre2Camera::SetAntiAliasing(const unsigned int _aa)
 {
-  BaseCamera::SetAntiAliasing(_aa);
-  this->renderTexture->SetAntiAliasing(_aa);
+  BaseCamera::SetAntiAliasing(0u);
+  this->renderTexture->SetAntiAliasing(0u);
 }
 
 //////////////////////////////////////////////////
@@ -183,7 +183,8 @@ unsigned int Ogre2Camera::RenderTextureGLId() const
 //////////////////////////////////////////////////
 void Ogre2Camera::SetSelectionBuffer()
 {
-  this->selectionBuffer = new Ogre2SelectionBuffer(this->name, this->scene);
+  this->selectionBuffer = new Ogre2SelectionBuffer(
+      this->name, this->scene, this->ImageWidth(), this->ImageHeight());
 }
 
 //////////////////////////////////////////////////
@@ -196,10 +197,12 @@ VisualPtr Ogre2Camera::VisualAt(const math::Vector2i &_mousePos)
     this->SetSelectionBuffer();
 
     if (!this->selectionBuffer)
-    {
       return result;
-    }
   }
+
+  // Keep selection buffer viewport dims in sync with the camera.
+  this->selectionBuffer->SetDimensions(
+      this->ImageWidth(), this->ImageHeight());
 
   float ratio = screenScalingFactor();
   math::Vector2i mousePos(

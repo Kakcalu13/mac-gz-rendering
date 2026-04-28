@@ -504,6 +504,12 @@ void Ogre2ThermalCamera::CreateThermalTexture()
     // Input texture
     nodeDef->addTextureSourceName("rt_input", 0,
         Ogre::TextureDefinitionBase::TEXTURE_INPUT);
+
+    // depthTexture stores hardware depth values sampled by the quad pass.
+    // On Metal, PFG_D32_FLOAT cannot be a color render target, so we never
+    // use it as the target of a target-pass directly.  Instead it is wired as
+    // the depth attachment of sceneColorTexture's RTV (same pattern as the
+    // depth camera compositor).
     Ogre::TextureDefinitionBase::TextureDefinition *thermalTexDef =
         nodeDef->addTextureDefinition("depthTexture");
     thermalTexDef->textureType = Ogre::TextureTypes::Type2D;
@@ -517,6 +523,23 @@ void Ogre2ThermalCamera::CreateThermalTexture()
     thermalTexDef->fsaa = "1";
     thermalTexDef->depthBufferId = Ogre::DepthBuffer::POOL_NON_SHAREABLE;
     thermalTexDef->depthBufferFormat = Ogre::PFG_UNKNOWN;
+
+    // Throwaway color target whose sole purpose is to give the full-scene pass
+    // a valid color attachment while hardware depth writes populate depthTexture.
+    Ogre::TextureDefinitionBase::TextureDefinition *sceneColorTexDef =
+        nodeDef->addTextureDefinition("sceneColorTexture");
+    sceneColorTexDef->textureType = Ogre::TextureTypes::Type2D;
+    sceneColorTexDef->width = 0;
+    sceneColorTexDef->height = 0;
+    sceneColorTexDef->depthOrSlices = 1;
+    sceneColorTexDef->numMipmaps = 1;
+    sceneColorTexDef->widthFactor = 1;
+    sceneColorTexDef->heightFactor = 1;
+    sceneColorTexDef->format = Ogre::PFG_R8_UNORM;
+    sceneColorTexDef->fsaa = "1";
+    sceneColorTexDef->depthBufferId = Ogre::DepthBuffer::POOL_DEFAULT;
+    sceneColorTexDef->depthBufferFormat = Ogre::PFG_D32_FLOAT;
+    sceneColorTexDef->preferDepthTexture = true;
 
     Ogre::TextureDefinitionBase::TextureDefinition *colorTexDef =
         nodeDef->addTextureDefinition("colorTexture");
@@ -533,9 +556,23 @@ void Ogre2ThermalCamera::CreateThermalTexture()
     colorTexDef->depthBufferFormat = Ogre::PFG_D32_FLOAT;
     colorTexDef->preferDepthTexture = true;
 
+    // ogre-next 2.3 requires explicit RTVs for TEXTURE_LOCAL render targets.
+    // sceneColorTexture uses depthTexture as its depth attachment so the scene
+    // pass writes hardware depth into depthTexture without ever using it as a
+    // color attachment (which Metal forbids for Depth32Float).
+    Ogre::RenderTargetViewDef *sceneColorTexRtv =
+        nodeDef->addRenderTextureView("sceneColorTexture");
+    sceneColorTexRtv->setForTextureDefinition("sceneColorTexture", sceneColorTexDef);
+    sceneColorTexRtv->depthAttachment.textureName = "depthTexture";
+
+    Ogre::RenderTargetViewDef *colorTexRtv =
+        nodeDef->addRenderTextureView("colorTexture");
+    colorTexRtv->setForTextureDefinition("colorTexture", colorTexDef);
+
     nodeDef->setNumTargetPass(3);
+    // Full-scene pass: populates depthTexture via depth attachment
     Ogre::CompositorTargetDef *depthTargetDef =
-        nodeDef->addTargetPass("depthTexture");
+        nodeDef->addTargetPass("sceneColorTexture");
     depthTargetDef->setNumPasses(2);
     {
       // clear pass

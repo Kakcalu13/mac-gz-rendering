@@ -60,14 +60,23 @@ struct gz::rendering::Ogre2SelectionBufferPrivate
 
   /// \brief Render texture data buffer
   public: uint8_t *buffer = nullptr;
+
+  /// \brief Width of the main camera viewport in pixels
+  public: unsigned int viewportWidth = 0;
+
+  /// \brief Height of the main camera viewport in pixels
+  public: unsigned int viewportHeight = 0;
 };
 
 /////////////////////////////////////////////////
 Ogre2SelectionBuffer::Ogre2SelectionBuffer(const std::string &_cameraName,
-    Ogre2ScenePtr _scene): dataPtr(new Ogre2SelectionBufferPrivate)
+    Ogre2ScenePtr _scene, unsigned int _width, unsigned int _height)
+    : dataPtr(new Ogre2SelectionBufferPrivate)
 {
   this->dataPtr->scene = _scene;
   this->dataPtr->sceneMgr = _scene->OgreSceneManager();
+  this->dataPtr->viewportWidth = _width;
+  this->dataPtr->viewportHeight = _height;
 
   this->dataPtr->camera = this->dataPtr->sceneMgr->findCameraNoThrow(
       _cameraName);
@@ -96,6 +105,14 @@ Ogre2SelectionBuffer::~Ogre2SelectionBuffer()
 }
 
 /////////////////////////////////////////////////
+void Ogre2SelectionBuffer::SetDimensions(unsigned int _width,
+    unsigned int _height)
+{
+  this->dataPtr->viewportWidth = _width;
+  this->dataPtr->viewportHeight = _height;
+}
+
+/////////////////////////////////////////////////
 void Ogre2SelectionBuffer::Update()
 {
   if (!this->dataPtr->texture)
@@ -103,14 +120,14 @@ void Ogre2SelectionBuffer::Update()
 
   this->dataPtr->materialSwitcher->Reset();
 
-  // manual update
+  // Enable the selection workspace, render one frame, then disable it.
   this->dataPtr->ogreCompositorWorkspace->setEnabled(true);
   auto engine = Ogre2RenderEngine::Instance();
-  engine->OgreRoot()->renderOneFrame();
+  auto ogreRoot = engine->OgreRoot();
+  ogreRoot->renderOneFrame();
   this->dataPtr->ogreCompositorWorkspace->setEnabled(false);
 
   // Download the 1×1 pixel from the GPU using AsyncTextureTicket
-  auto ogreRoot = engine->OgreRoot();
   Ogre::TextureGpuManager *texMgr =
       ogreRoot->getRenderSystem()->getTextureGpuManager();
 
@@ -158,10 +175,6 @@ void Ogre2SelectionBuffer::DeleteRTTBuffer()
 /////////////////////////////////////////////////
 void Ogre2SelectionBuffer::CreateRTTBuffer()
 {
-  // create a 1x1 pixel render-to-texture buffer
-  unsigned int width = 1;
-  unsigned int height = 1;
-
   auto engine = Ogre2RenderEngine::Instance();
   auto ogreRoot = engine->OgreRoot();
   Ogre::TextureGpuManager *texMgr =
@@ -173,64 +186,27 @@ void Ogre2SelectionBuffer::CreateRTTBuffer()
       Ogre::TextureFlags::RenderToTexture,
       Ogre::TextureTypes::Type2D);
 
-  this->dataPtr->texture->setResolution(width, height);
+  this->dataPtr->texture->setResolution(1u, 1u);
   this->dataPtr->texture->setNumMipmaps(1u);
   this->dataPtr->texture->setPixelFormat(Ogre::PFG_RGBA8_UNORM);
   this->dataPtr->texture->scheduleTransitionTo(Ogre::GpuResidency::Resident);
 
-  // create compositor workspace for rendering
   Ogre::CompositorManager2 *ogreCompMgr = ogreRoot->getCompositorManager2();
 
   const Ogre::String workspaceName = "SelectionBufferWorkspace" +
       this->dataPtr->camera->getName();
 
-  // createBasicWorkspaceDef builds a single-pass workspace def.
-  // We reach into the node def to set the visibility mask on the pass
-  // definition BEFORE instantiating the workspace, so that the node
-  // sequence (which may be empty when bEnabled=false) is not accessed.
   ogreCompMgr->createBasicWorkspaceDef(workspaceName,
       Ogre::ColourValue(0.0f, 0.0f, 0.0f, 1.0f));
-
-  // Set visibility mask via the workspace definition.
-  // createBasicWorkspaceDef connects external channel 0 to the auto-generated
-  // node.  Walk the node def's pass defs to find the scene pass.
-  // We do this BEFORE addWorkspace so the pass def is ready when nodes init.
-  Ogre::CompositorWorkspaceDef *wsDef =
-      ogreCompMgr->getWorkspaceDefinition(workspaceName);
-  if (wsDef)
-  {
-    const Ogre::CompositorWorkspaceDef::NodeAliasMap &nodeAliases =
-        wsDef->getNodeAliasMap();
-    for (const auto &aliasIt : nodeAliases)
-    {
-      Ogre::CompositorNodeDef *nodeDef =
-          ogreCompMgr->getNodeDefinitionNonConst(aliasIt.second);
-      for (size_t t = 0; t < nodeDef->getNumTargetPasses(); ++t)
-      {
-        Ogre::CompositorTargetDef *targetDef = nodeDef->getTargetPass(t);
-        for (Ogre::CompositorPassDef *passDef :
-             targetDef->getCompositorPassesNonConst())
-        {
-          if (passDef->getType() == Ogre::PASS_SCENE)
-          {
-            static_cast<Ogre::CompositorPassSceneDef *>(
-                passDef)->mVisibilityMask = IGN_VISIBILITY_SELECTABLE;
-          }
-        }
-      }
-    }
-  }
 
   this->dataPtr->ogreCompositorWorkspace =
       ogreCompMgr->addWorkspace(this->dataPtr->scene->OgreSceneManager(),
       this->dataPtr->texture,
       this->dataPtr->selectionCamera, workspaceName, false);
 
-  // attach material switcher as workspace listener
   this->dataPtr->ogreCompositorWorkspace->addListener(
       this->dataPtr->materialSwitcher.get());
 
-  // buffer to store 1 pixel: 4 bytes (RGBA8)
   this->dataPtr->buffer = new uint8_t[4u];
   memset(this->dataPtr->buffer, 0, 4u);
 }
@@ -244,15 +220,14 @@ Ogre::Item *Ogre2SelectionBuffer::OnSelectionClick(const int _x, const int _y)
   if (!this->dataPtr->camera)
     return nullptr;
 
-  Ogre::Viewport *vp = this->dataPtr->camera->getLastViewport();
+  // Use the stored viewport dimensions instead of getLastViewport(), which
+  // returns 0x0 in ogre-next 2.3 because the viewport's mCurrentTarget is
+  // only valid during a render pass, not between frames.
+  const unsigned int targetWidth = this->dataPtr->viewportWidth;
+  const unsigned int targetHeight = this->dataPtr->viewportHeight;
 
-  if (!vp)
+  if (targetWidth == 0 || targetHeight == 0)
     return nullptr;
-
-  const unsigned int targetWidth =
-      static_cast<unsigned int>(vp->getActualWidth());
-  const unsigned int targetHeight =
-      static_cast<unsigned int>(vp->getActualHeight());
 
   if (_x < 0 || _y < 0 || _x >= static_cast<int>(targetWidth)
       || _y >= static_cast<int>(targetHeight))
@@ -282,27 +257,35 @@ Ogre::Item *Ogre2SelectionBuffer::OnSelectionClick(const int _x, const int _y)
       this->dataPtr->camera->getDerivedPosition());
   this->dataPtr->selectionCamera->setOrientation(
       this->dataPtr->camera->getDerivedOrientation());
+  this->dataPtr->selectionCamera->setNearClipDistance(
+      this->dataPtr->camera->getNearClipDistance());
+  this->dataPtr->selectionCamera->setFarClipDistance(
+      this->dataPtr->camera->getFarClipDistance());
+  this->dataPtr->selectionCamera->setFOVy(
+      this->dataPtr->camera->getFOVy());
 
   // update render texture
   this->Update();
 
-  size_t posInStream = 0;
-  math::Color::BGRA color(0);
   if (!this->dataPtr->buffer)
-  {
-    ignerr << "Selection buffer is null." << std::endl;
     return nullptr;
-  }
-  memcpy(static_cast<void *>(&color), this->dataPtr->buffer + posInStream, 4);
-  math::Color cv;
-  cv.SetFromARGB(color);
-  cv.A(1.0);
+
+  const uint8_t r = this->dataPtr->buffer[0];
+  const uint8_t g = this->dataPtr->buffer[1];
+  const uint8_t b = this->dataPtr->buffer[2];
+
+  math::Color cv(
+      static_cast<float>(r) / 255.0f,
+      static_cast<float>(g) / 255.0f,
+      static_cast<float>(b) / 255.0f,
+      1.0f);
+
   const std::string &entName =
-    this->dataPtr->materialSwitcher->EntityName(cv);
+      this->dataPtr->materialSwitcher->EntityName(cv);
 
   if (entName.empty())
   {
-    return 0;
+    return nullptr;
   }
   else
   {

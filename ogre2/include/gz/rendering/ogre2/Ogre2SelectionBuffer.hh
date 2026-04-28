@@ -49,8 +49,17 @@ namespace ignition
       /// \param[in] _cameraName Name of the camera to generate a selection
       /// buffer for.
       /// \param[in] _scene Pointer to the scene
+      /// \param[in] _width Width of the camera viewport in pixels
+      /// \param[in] _height Height of the camera viewport in pixels
       public: Ogre2SelectionBuffer(const std::string &_cameraName,
-                  Ogre2ScenePtr _scene);
+                  Ogre2ScenePtr _scene,
+                  unsigned int _width,
+                  unsigned int _height);
+
+      /// \brief Update the viewport dimensions (called when camera is resized)
+      /// \param[in] _width New width in pixels
+      /// \param[in] _height New height in pixels
+      public: void SetDimensions(unsigned int _width, unsigned int _height);
 
       /// \brief Destructor
       public: ~Ogre2SelectionBuffer();

@@ -21,6 +21,11 @@
 #include "gz/rendering/ogre2/Ogre2Scene.hh"
 #include "gz/rendering/RenderTypes.hh"
 
+// HLMS Unlit headers for color-coded selection rendering
+#include <Hlms/Unlit/OgreHlmsUnlit.h>
+#include <Hlms/Unlit/OgreHlmsUnlitDatablock.h>
+#include <OgreHlmsManager.h>
+
 using namespace gz;
 using namespace rendering;
 
@@ -30,48 +35,73 @@ Ogre2MaterialSwitcher::Ogre2MaterialSwitcher(Ogre2ScenePtr _scene)
 {
   this->currentColor = math::Color(0.0f, 0.0f, 0.1f);
   this->scene = _scene;
-
-  // plain opaque material
-  Ogre::ResourcePtr res =
-    Ogre::MaterialManager::getSingleton().load("ign-rendering/plain_color",
-        Ogre::ResourceGroupManager::DEFAULT_RESOURCE_GROUP_NAME);
-
-  this->plainMaterial = res.staticCast<Ogre::Material>();
-  this->plainMaterial->load();
-
-  // plain overlay material
-  this->plainOverlayMaterial =
-      this->plainMaterial->clone("plain_color_overlay");
-  if (!this->plainOverlayMaterial->getTechnique(0) ||
-      !this->plainOverlayMaterial->getTechnique(0)->getPass(0))
-  {
-    ignerr << "Problem creating selection buffer overlay material"
-        << std::endl;
-    return;
-  }
-  Ogre::Pass *overlayPass =
-      this->plainOverlayMaterial->getTechnique(0)->getPass(0);
-  Ogre::HlmsMacroblock macroblock(*overlayPass->getMacroblock());
-  macroblock.mDepthCheck = false;
-  macroblock.mDepthWrite = false;
-  overlayPass->setMacroblock(macroblock);
 }
 
 /////////////////////////////////////////////////
 Ogre2MaterialSwitcher::~Ogre2MaterialSwitcher()
 {
+  // Destroy all cached selection datablocks
+  Ogre::Root *root = Ogre::Root::getSingletonPtr();
+  if (root)
+  {
+    Ogre::HlmsManager *hlmsManager = root->getHlmsManager();
+    Ogre::HlmsUnlit *hlmsUnlit = static_cast<Ogre::HlmsUnlit*>(
+        hlmsManager->getHlms(Ogre::HLMS_UNLIT));
+    if (hlmsUnlit)
+    {
+      for (auto &pair : this->selectionDatablocks)
+        hlmsUnlit->destroyDatablock(pair.second->getName());
+    }
+  }
+}
+
+////////////////////////////////////////////////
+Ogre::HlmsUnlitDatablock *Ogre2MaterialSwitcher::GetOrCreateDatablock(
+    const math::Color &_color, bool _overlay)
+{
+  // Build a unique datablock name from the color + overlay flag
+  const uint32_t key = _color.AsRGBA();
+  auto it = this->selectionDatablocks.find(
+      _overlay ? (key | 0x80000000u) : key);
+  if (it != this->selectionDatablocks.end())
+    return it->second;
+
+  Ogre::Root *root = Ogre::Root::getSingletonPtr();
+  Ogre::HlmsManager *hlmsManager = root->getHlmsManager();
+  Ogre::HlmsUnlit *hlmsUnlit = static_cast<Ogre::HlmsUnlit*>(
+      hlmsManager->getHlms(Ogre::HLMS_UNLIT));
+
+  // Build a unique name
+  std::string dbName = "__sel_" + std::to_string(key)
+      + (_overlay ? "_ov" : "");
+
+  Ogre::HlmsMacroblock macroblock;
+  macroblock.mDepthCheck = !_overlay;
+  macroblock.mDepthWrite = !_overlay;
+  Ogre::HlmsBlendblock blendblock;
+
+  Ogre::HlmsUnlitDatablock *db = static_cast<Ogre::HlmsUnlitDatablock*>(
+      hlmsUnlit->createDatablock(
+          dbName, dbName, macroblock, blendblock, Ogre::HlmsParamVec()));
+  db->setUseColour(true);
+  db->setColour(Ogre::ColourValue(
+      _color.R(), _color.G(), _color.B(), 1.0f));
+
+  const uint32_t mapKey = _overlay ? (key | 0x80000000u) : key;
+  this->selectionDatablocks[mapKey] = db;
+  return db;
 }
 
 ////////////////////////////////////////////////
 void Ogre2MaterialSwitcher::workspacePreUpdate(
-    Ogre::CompositorWorkspace * /*_workspace*/)
+    Ogre::CompositorWorkspace *_workspace)
 {
-  // swap item to use v1 shader material before the workspace renders
-  // Note: keep an eye out for performance impact on switching materials
-  // on the fly. We are not doing this often so should be ok.
+  // Switch each scene item to a solid-color HLMS Unlit datablock so the
+  // 1×1 selection buffer can identify which entity is under the cursor.
   this->datablockMap.clear();
   auto itor = this->scene->OgreSceneManager()->getMovableObjectIterator(
       Ogre::ItemFactory::FACTORY_TYPE_NAME);
+
   while (itor.hasMoreElements())
   {
     this->NextColor();
@@ -84,20 +114,19 @@ void Ogre2MaterialSwitcher::workspacePreUpdate(
     for (unsigned int i = 0; i < item->getNumSubItems(); ++i)
     {
       Ogre::SubItem *subItem = item->getSubItem(i);
-      Ogre::HlmsDatablock *datablock = subItem->getDatablock();
-      this->datablockMap[subItem] = datablock;
+      Ogre::HlmsDatablock *origDatablock = subItem->getDatablock();
+      this->datablockMap[subItem] = origDatablock;
 
-      subItem->setCustomParameter(1,
-          Ogre::Vector4(this->currentColor.R(), this->currentColor.G(),
-                        this->currentColor.B(), 1.0));
+      bool isOverlay = false;
+      if (origDatablock && origDatablock->getMacroblock())
+        {
+          isOverlay = (!origDatablock->getMacroblock()->mDepthWrite &&
+                       !origDatablock->getMacroblock()->mDepthCheck);
+        }
 
-      // check if it's an overlay material by assuming the
-      // depth check and depth write properties are off.
-      if (!datablock->getMacroblock()->mDepthWrite &&
-          !datablock->getMacroblock()->mDepthCheck)
-        subItem->setMaterial(this->plainOverlayMaterial);
-      else
-        subItem->setMaterial(this->plainMaterial);
+      Ogre::HlmsUnlitDatablock *selDb =
+          GetOrCreateDatablock(this->currentColor, isOverlay);
+      subItem->setDatablock(selDb);
     }
     itor.moveNext();
   }
@@ -107,7 +136,7 @@ void Ogre2MaterialSwitcher::workspacePreUpdate(
 void Ogre2MaterialSwitcher::workspacePosUpdate(
     Ogre::CompositorWorkspace * /*_workspace*/)
 {
-  // restore item to use hlms material after the workspace finishes
+  // Restore each item's original datablock after the selection render.
   auto itor = this->scene->OgreSceneManager()->getMovableObjectIterator(
       Ogre::ItemFactory::FACTORY_TYPE_NAME);
   while (itor.hasMoreElements())
