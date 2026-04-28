@@ -46,7 +46,7 @@ if (WIN32)
   ${IGNITION_RENDERING_ENGINE_INSTALL_DIR}\/${versioned}
   ${IGNITION_RENDERING_ENGINE_INSTALL_DIR}\/${unversioned})")
 else()
-  EXECUTE_PROCESS(COMMAND ${CMAKE_COMMAND} -E create_symlink ${versioned} ${unversioned})
+  EXECUTE_PROCESS(COMMAND ${CMAKE_COMMAND} -E create_symlink ${versioned} ${unversioned} WORKING_DIRECTORY ${PROJECT_BINARY_DIR})
   INSTALL(FILES ${PROJECT_BINARY_DIR}/${unversioned} DESTINATION ${IGNITION_RENDERING_ENGINE_INSTALL_DIR})
 endif()
 
