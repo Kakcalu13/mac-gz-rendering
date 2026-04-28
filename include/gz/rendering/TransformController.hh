@@ -105,6 +105,19 @@ namespace ignition
       /// \return Transform axis
       public: virtual math::Vector3d AxisById(unsigned int _id) const;
 
+      /// \brief Pick the gizmo axis visual closest to a ray, ignoring
+      /// any other scene geometry along the ray. Used so the gizmo retains
+      /// pick priority even when occluded by the ground plane or other
+      /// objects (e.g. a fallen entity whose Y arrow ends up under the
+      /// ground plane). Returns the visual ID of the closest hit gizmo
+      /// arrow / handle, or 0 if the ray misses every visible axis.
+      /// \param[in] _origin Ray origin in world space
+      /// \param[in] _dir Ray direction in world space (unit length)
+      /// \return Visual ID of the picked axis arrow/handle, or 0
+      public: virtual unsigned int AxisVisualByRay(
+          const math::Vector3d &_origin,
+          const math::Vector3d &_dir) const;
+
       /// \brief Translate the attached node
       /// \param[in] _translation Translation in the current transform space
       /// \param[in] _snap True to snap the final position to fixed increments
