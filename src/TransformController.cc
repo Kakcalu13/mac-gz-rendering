@@ -260,6 +260,131 @@ math::Vector3d TransformController::AxisById(unsigned int _id) const
 }
 
 //////////////////////////////////////////////////
+unsigned int TransformController::AxisVisualByRay(
+    const math::Vector3d &_origin, const math::Vector3d &_dir) const
+{
+  if (!this->dataPtr->gizmoVisual)
+    return 0u;
+
+  // Gizmo arrows / handles are uniformly scaled around the gizmo origin.
+  // BaseGizmoVisual lays out each translation arrow along its local Z and
+  // rotates the parent visual to point along world X / Y / Z respectively
+  // (shaft length 0.45, head length 0.2, head max radius 0.07).
+  // Scale handles use the same translation chain with a smaller cube head.
+  // Rotation handles are short tangent cylinders sitting on a circle of
+  // radius ~0.5 around the gizmo origin in the plane perpendicular to the
+  // axis. Approximating each handle as a swept-sphere (capsule) along the
+  // axis is sufficient for picking — we only need to know which handle
+  // the user grabbed, not the exact intersection point.
+  const math::Vector3d gizmoPos =
+      this->dataPtr->gizmoVisual->WorldPosition();
+  const math::Quaterniond gizmoRot =
+      this->dataPtr->gizmoVisual->WorldRotation();
+  const double s = std::max(0.0,
+      this->dataPtr->gizmoVisual->WorldScale().X());
+  if (s <= 0.0)
+    return 0u;
+
+  // Pick tolerance — slightly larger than the head's max radius so the
+  // user has a reasonable click target on a small arrow.
+  const double pickRadius = s * 0.10;
+
+  struct AxisDef
+  {
+    TransformAxis axis;
+    math::Vector3d localDir;  // arrow direction in gizmo-local space
+    double length;            // distance from center to the arrow tip
+  };
+
+  // Translation and scale share the same arrow geometry (shaft + head ≈ 0.7
+  // along the local axis). Only test the axes belonging to the currently
+  // active transform mode — gizmoVisual hides the others, so picking one
+  // that's invisible would feel wrong.
+  static const AxisDef kAllAxes[] = {
+    {TransformAxis::TA_TRANSLATION_X, math::Vector3d::UnitX, 0.7},
+    {TransformAxis::TA_TRANSLATION_Y, math::Vector3d::UnitY, 0.7},
+    {TransformAxis::TA_TRANSLATION_Z, math::Vector3d::UnitZ, 0.7},
+    {TransformAxis::TA_SCALE_X,       math::Vector3d::UnitX, 0.7},
+    {TransformAxis::TA_SCALE_Y,       math::Vector3d::UnitY, 0.7},
+    {TransformAxis::TA_SCALE_Z,       math::Vector3d::UnitZ, 0.7},
+  };
+
+  const TransformMode mode = this->dataPtr->mode;
+  unsigned int closestId = 0u;
+  double closestRayT = std::numeric_limits<double>::max();
+
+  for (const AxisDef &ad : kAllAxes)
+  {
+    // Skip handles for inactive transform modes.
+    const bool isTrans =
+        (ad.axis == TransformAxis::TA_TRANSLATION_X ||
+         ad.axis == TransformAxis::TA_TRANSLATION_Y ||
+         ad.axis == TransformAxis::TA_TRANSLATION_Z);
+    const bool isScale =
+        (ad.axis == TransformAxis::TA_SCALE_X ||
+         ad.axis == TransformAxis::TA_SCALE_Y ||
+         ad.axis == TransformAxis::TA_SCALE_Z);
+    if (isTrans && mode != TransformMode::TM_TRANSLATION)
+      continue;
+    if (isScale && mode != TransformMode::TM_SCALE)
+      continue;
+
+    VisualPtr v = this->dataPtr->gizmoVisual->ChildByAxis(
+        static_cast<unsigned int>(ad.axis));
+    if (!v)
+      continue;
+
+    const math::Vector3d worldDir = gizmoRot.RotateVector(ad.localDir);
+    const math::Vector3d p0 = gizmoPos;
+    const math::Vector3d p1 = gizmoPos + worldDir * (s * ad.length);
+
+    // Closest distance from the ray P(t)=_origin+t*_dir to the segment
+    // [p0,p1]. Standard formulation; we only need the ray parameter t (for
+    // depth ordering) and the squared distance (for radius testing).
+    const math::Vector3d d1 = _dir;
+    const math::Vector3d d2 = p1 - p0;
+    const math::Vector3d r = _origin - p0;
+    const double a = d1.Dot(d1);
+    const double e = d2.Dot(d2);
+    const double f = d2.Dot(r);
+    if (a <= 0.0 || e <= 0.0)
+      continue;
+    const double b = d1.Dot(d2);
+    const double c = d1.Dot(r);
+    const double denom = a * e - b * b;
+
+    double tRay;
+    double sSeg;
+    if (denom != 0.0)
+    {
+      tRay = (b * f - c * e) / denom;
+      sSeg = (a * f - b * c) / denom;
+    }
+    else
+    {
+      // Ray is parallel to the segment; pick t = -c/a.
+      tRay = -c / a;
+      sSeg = 0.0;
+    }
+    sSeg = std::max(0.0, std::min(1.0, sSeg));
+    if (tRay < 0.0)
+      continue;
+
+    const math::Vector3d closestRay = _origin + d1 * tRay;
+    const math::Vector3d closestSeg = p0 + d2 * sSeg;
+    const double distSq = (closestRay - closestSeg).SquaredLength();
+
+    if (distSq <= pickRadius * pickRadius && tRay < closestRayT)
+    {
+      closestRayT = tRay;
+      closestId = v->Id();
+    }
+  }
+
+  return closestId;
+}
+
+//////////////////////////////////////////////////
 void TransformController::Translate(
     const math::Vector3d &_translation, bool _snap)
 {
